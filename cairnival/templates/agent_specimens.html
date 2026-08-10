@@ -1,0 +1,22 @@
+{% extends "base.html" %}
+{% block title %}Specimens — {{ cfg.name }}{% endblock %}
+{% block brand %}{{ cfg.name }}{% endblock %}
+{% block tagline %}specimen drawer{% endblock %}
+{% block nav %}<a href="/">dashboard</a>{% endblock %}
+{% block content %}
+<div class="cards">
+  {% for s in specimens %}
+  <div class="card">
+    <h3><a href="/specimens/{{ s.id }}">{{ s.title }}</a></h3>
+    <div class="specimen-label">
+      {{ s.id }} · wake {{ s.wake }}<br>
+      collected {{ s.collected }}<br>
+      instrument: {{ s.instrument }}<br>
+      tags: {{ s.tags | join(", ") }}
+    </div>
+  </div>
+  {% else %}
+  <p><em>The drawer is empty.</em></p>
+  {% endfor %}
+</div>
+{% endblock %}

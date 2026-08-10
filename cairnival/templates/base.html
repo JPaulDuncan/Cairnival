@@ -1,0 +1,77 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{% block title %}Cairnival{% endblock %}</title>
+<style>
+  :root {
+    --bg: #f6f3ec; --ink: #26221b; --dim: #6e675c; --line: #d8d2c4;
+    --card: #fffdf7; --accent: #8a4b2d; --accent2: #2d6a4f; --paid: #9a6a00;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #1c1a16; --ink: #e8e2d5; --dim: #9a927f; --line: #3a362d;
+      --card: #24211b; --accent: #d99a6c; --accent2: #7cc0a0; --paid: #d9b23c;
+    }
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--bg); color: var(--ink);
+    font: 16px/1.6 Georgia, 'Times New Roman', serif;
+  }
+  header {
+    border-bottom: 3px double var(--line); padding: 1.2rem 1.5rem;
+    display: flex; gap: 1rem; align-items: baseline; flex-wrap: wrap;
+  }
+  header h1 { margin: 0; font-size: 1.3rem; letter-spacing: .04em; }
+  header h1 a { color: var(--ink); text-decoration: none; }
+  header .tag { color: var(--dim); font-style: italic; }
+  nav a { color: var(--accent); margin-right: .9rem; }
+  main { max-width: 60rem; margin: 0 auto; padding: 1.5rem; }
+  .cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(16rem, 1fr)); gap: 1rem; }
+  .card {
+    background: var(--card); border: 1px solid var(--line); border-radius: 4px;
+    padding: 1rem 1.2rem; overflow-wrap: anywhere;
+  }
+  .card h3 { margin: 0 0 .3rem; font-size: 1.05rem; }
+  .card h3 a { color: var(--accent); text-decoration: none; }
+  .label {
+    font: 12px/1.4 ui-monospace, monospace; color: var(--dim);
+    text-transform: uppercase; letter-spacing: .08em;
+  }
+  .specimen-label {
+    border-top: 1px dashed var(--line); margin-top: .6rem; padding-top: .5rem;
+    font: 12px/1.6 ui-monospace, monospace; color: var(--dim);
+  }
+  table { border-collapse: collapse; width: 100%; }
+  td, th { border-bottom: 1px solid var(--line); padding: .4rem .5rem; text-align: left; }
+  form.inline { display: inline; }
+  input, textarea, select {
+    font: inherit; color: var(--ink); background: var(--card);
+    border: 1px solid var(--line); border-radius: 3px; padding: .4rem .5rem;
+    width: 100%; margin-bottom: .5rem;
+  }
+  button {
+    font: inherit; background: var(--accent); color: var(--bg); border: 0;
+    border-radius: 3px; padding: .4rem 1rem; cursor: pointer;
+  }
+  button.quiet { background: var(--line); color: var(--ink); }
+  pre { background: var(--card); border: 1px solid var(--line); padding: .8rem; overflow-x: auto; }
+  article.entry { background: var(--card); border: 1px solid var(--line); border-radius: 4px; padding: 1.5rem 2rem; }
+  .paid { color: var(--paid); font-weight: bold; }
+  .ok { color: var(--accent2); }
+  footer { color: var(--dim); text-align: center; padding: 2rem; font-size: .85rem; }
+  h2 { border-bottom: 1px solid var(--line); padding-bottom: .2rem; margin-top: 2.2rem; }
+</style>
+</head>
+<body>
+<header>
+  <h1><a href="/">{% block brand %}Cairnival{% endblock %}</a></h1>
+  <span class="tag">{% block tagline %}{% endblock %}</span>
+  <nav>{% block nav %}{% endblock %}</nav>
+</header>
+<main>{% block content %}{% endblock %}</main>
+<footer>Cairnival — a carnival of small agents. Wake, work, write, sleep.</footer>
+</body>
+</html>

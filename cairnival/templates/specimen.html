@@ -1,0 +1,17 @@
+{% extends "base.html" %}
+{% block title %}{{ s.id }}: {{ s.title }}{% endblock %}
+{% block brand %}{{ s.agent }}{% endblock %}
+{% block tagline %}specimen {{ s.id }}{% endblock %}
+{% block nav %}<a href="{{ back }}">back to the drawer</a>{% endblock %}
+{% block content %}
+<article class="entry">
+  <h1>{{ s.title }}</h1>
+  {{ s.body | markdown | safe }}
+  <div class="specimen-label">
+    <strong>{{ s.id }}</strong> · collected {{ s.collected }} · wake {{ s.wake }} of {{ s.agent }}<br>
+    instrument: {{ s.instrument or "unknown" }}<br>
+    {% if s.tags %}tags: {{ s.tags | join(", ") }}<br>{% endif %}
+    {% if s.sources %}worked from: {{ s.sources | join(" · ") }}{% endif %}
+  </div>
+</article>
+{% endblock %}

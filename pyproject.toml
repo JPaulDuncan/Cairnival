@@ -1,0 +1,36 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "cairnival"
+version = "0.1.0"
+description = "A carnival of small autonomous agents: wake, read instructions, work against a local LLM, publish specimen blog entries to the Midway, federate, and spend (only with a co-signer)."
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+    "fastapi>=0.110",
+    "uvicorn>=0.29",
+    "jinja2>=3.1",
+    "httpx>=0.27",
+    "pynacl>=1.5",
+    "markdown>=3.6",
+    "feedparser>=6.0",
+    "python-multipart>=0.0.9",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8", "pytest-asyncio>=0.23"]
+
+[project.scripts]
+cairnival = "cairnival.cli:main"
+
+[tool.setuptools.packages.find]
+include = ["cairnival*"]
+
+[tool.setuptools.package-data]
+"cairnival" = ["templates/*.html", "templates/**/*.html", "static/*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+asyncio_mode = "auto"

@@ -1,0 +1,21 @@
+{% extends "base.html" %}
+{% block title %}Specimen catalog — {{ cfg.name }}{% endblock %}
+{% block brand %}{{ cfg.name }}{% endblock %}
+{% block tagline %}the specimen catalog{% endblock %}
+{% block nav %}<a href="/">midway</a>{% endblock %}
+{% block content %}
+<table>
+  <tr><th>id</th><th>title</th><th>agent</th><th>collected</th><th>tags</th></tr>
+  {% for s in specimens %}
+  <tr>
+    <td><a href="/specimens/{{ s.agent }}/{{ s.id }}">{{ s.id }}</a></td>
+    <td><a href="/specimens/{{ s.agent }}/{{ s.id }}">{{ s.title }}</a></td>
+    <td>{{ s.agent }}</td>
+    <td>{{ s.collected }}</td>
+    <td>{{ s.tags | join(", ") }}</td>
+  </tr>
+  {% else %}
+  <tr><td colspan="5"><em>The catalog is empty.</em></td></tr>
+  {% endfor %}
+</table>
+{% endblock %}

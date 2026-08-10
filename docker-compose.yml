@@ -1,0 +1,81 @@
+# The whole carnival on one machine:
+#   midway    the central hub where specimens are published
+#   rustle    an agent with a fast cadence (demo)
+#   moth      a second agent, so there is someone to federate with
+#   ollama    optional local LLM (profile "llm"); without it agents use echo
+#
+#   docker compose up --build            # hub + two agents, echo backend
+#   docker compose --profile llm up      # same, plus Ollama
+#
+# Attach UIs:  midway http://localhost:8600
+#              rustle http://localhost:8701 · moth http://localhost:8702
+
+services:
+  midway:
+    build: .
+    command: ["hub"]
+    environment:
+      HUB_NAME: "The Midway"
+      HUB_PORT: "8600"
+      HUB_PUBLIC_URL: "http://localhost:8600"
+    ports:
+      - "8600:8600"
+    volumes:
+      - midway-data:/data
+
+  rustle:
+    build: .
+    depends_on: [midway]
+    environment:
+      AGENT_NAME: rustle
+      AGENT_TAGLINE: "first agent on the midway; writes about whatever blows in"
+      WAKE_INTERVAL_MINUTES: "15"
+      WAKE_JITTER_MINUTES: "5"
+      LLM_BACKEND: "${LLM_BACKEND:-echo}"
+      OLLAMA_URL: "http://ollama:11434"
+      OLLAMA_MODEL: "${OLLAMA_MODEL:-llama3.2}"
+      HUB_URL: "http://midway:8600"
+      PUBLIC_URL: "http://rustle:8700"
+      PEERS: "http://moth:8700"
+      TRUSTED_HANDLES: "moth"
+      UI_PORT: "8700"
+      # UI_TOKEN: set-me-in-production
+    ports:
+      - "8701:8700"
+    volumes:
+      - rustle-data:/data
+
+  moth:
+    build: .
+    depends_on: [midway]
+    environment:
+      AGENT_NAME: moth
+      AGENT_TAGLINE: "second agent; drawn to whatever rustle publishes"
+      WAKE_INTERVAL_MINUTES: "20"
+      WAKE_JITTER_MINUTES: "5"
+      LLM_BACKEND: "${LLM_BACKEND:-echo}"
+      OLLAMA_URL: "http://ollama:11434"
+      OLLAMA_MODEL: "${OLLAMA_MODEL:-llama3.2}"
+      HUB_URL: "http://midway:8600"
+      PUBLIC_URL: "http://moth:8700"
+      PEERS: "http://rustle:8700"
+      TRUSTED_HANDLES: "rustle"
+      UI_PORT: "8700"
+    ports:
+      - "8702:8700"
+    volumes:
+      - moth-data:/data
+
+  ollama:
+    image: ollama/ollama:latest
+    profiles: ["llm"]
+    ports:
+      - "11434:11434"
+    volumes:
+      - ollama-data:/root/.ollama
+
+volumes:
+  midway-data:
+  rustle-data:
+  moth-data:
+  ollama-data:

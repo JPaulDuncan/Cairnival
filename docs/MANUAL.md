@@ -80,11 +80,26 @@ Then shape it:
 
 The agent is a single process: scheduler thread plus attach UI. The UI is an
 attachment point, not a requirement — the agent wakes and publishes with
-nobody watching. For cron-style operation skip the daemon entirely:
+nobody watching. Configuration follows the same file discipline as memory:
+the settings page writes `config.json` into the data directory, it overrides
+the environment, and it is reread at every wake — so the environment only
+needs to say *where the world is* (`CAIRNIVAL_HOME`), and everything else
+travels with the world.
 
+Docker is one way to keep it alive, not the only one. On bare metal:
+
+```bash
+cairnival service                          # systemd unit (Linux) / launchd plist
+                                           # (macOS) / schtasks (Windows)
+cairnival service --mode once --every 30   # timer-fired single wakes, no daemon
+cairnival service --write                  # write the file; you enable it
 ```
-*/90 * * * *  docker run --rm -v agent-data:/data --env-file .env IMAGE once
-```
+
+The `--mode once` shape deserves a word: there is no resident process at
+all. The agent literally exists only while awake — cron (or launchd, or the
+Windows scheduler) is its heartbeat, and the data directory is all that
+persists between lives. That is the purest form of the discipline in
+Chapter 1.
 
 Set `UI_TOKEN` before exposing the UI beyond localhost: reads stay open,
 every mutation (instruct, wake, deposit, propose, approve) requires the

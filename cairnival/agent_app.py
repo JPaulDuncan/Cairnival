@@ -3,13 +3,17 @@
 The agent mainly runs headless: a scheduler thread wakes it on cadence. This
 FastAPI app is the *attachment point* — a human (or another agent) can attach
 to a running agent to watch it, instruct it, feed its treasury, approve its
-spending, or deliver federation mail. Close the browser and the agent goes on
-without you.
+spending, configure it, or deliver federation mail. Close the browser and the
+agent goes on without you.
+
+Configuration is reloaded on every use (environment + the UI-editable
+``config.json`` overlay), so changes made on the settings page apply from the
+next request and the next wake without a restart. Only the data directory and
+the UI host/port are fixed at process start.
 """
 
 from __future__ import annotations
 
-import asyncio
 import threading
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -23,6 +27,7 @@ from .config import AgentConfig
 from .federation import Envelope, Identity, verify
 from .instructions import Instruction, drop
 from .memory import Memory, utcnow
+from .settings import GROUPS, SECRET_CLEAR_SENTINEL, apply_form, load_agent_config
 from .specimens import load_all
 from .treasury import Ledger
 from .wake import next_wake_delay_seconds, run_wake
@@ -31,11 +36,19 @@ TEMPLATES_DIR = Path(__file__).parent / "templates"
 
 
 def create_app(cfg: AgentConfig | None = None) -> FastAPI:
-    cfg = cfg or AgentConfig.from_env()
-    memory = Memory(cfg.home, cfg.name)
-    memory.ensure()
-    identity = Identity.load_or_create(memory.keys_dir, cfg.name)
-    ledger = Ledger(memory.treasury_dir)
+    boot_cfg = cfg or AgentConfig.from_env()
+    home = boot_cfg.home
+
+    def current() -> AgentConfig:
+        return load_agent_config(boot_cfg)
+
+    def open_memory(c: AgentConfig) -> Memory:
+        memory = Memory(home, c.name)
+        memory.ensure()
+        return memory
+
+    open_memory(current())  # create the world before the first request
+
     templates = Jinja2Templates(directory=str(TEMPLATES_DIR))
     templates.env.filters["markdown"] = lambda text: md.markdown(
         text, extensions=["fenced_code", "tables"]
@@ -46,15 +59,18 @@ def create_app(cfg: AgentConfig | None = None) -> FastAPI:
 
     def scheduler() -> None:
         while True:
-            delay = next_wake_delay_seconds(cfg)
+            delay = next_wake_delay_seconds(current())
             scheduler_state["next_wake"] = f"in ~{delay // 60} min"
             wake_now.wait(timeout=delay)
             wake_now.clear()
+            c = current()
             scheduler_state["running"] = True
             try:
-                run_wake(cfg)
+                run_wake(c)
             except Exception as exc:  # a bad wake must not kill the agent
-                memory.journal_append(f"\n## failed wake — {utcnow()}\n- error: {exc}")
+                open_memory(c).journal_append(
+                    f"\n## failed wake — {utcnow()}\n- error: {exc}"
+                )
             finally:
                 scheduler_state["running"] = False
 
@@ -64,19 +80,20 @@ def create_app(cfg: AgentConfig | None = None) -> FastAPI:
         thread.start()
         yield
 
-    app = FastAPI(title=f"Cairnival agent: {cfg.name}", lifespan=lifespan)
+    app = FastAPI(title=f"Cairnival agent: {boot_cfg.name}", lifespan=lifespan)
 
     # -- auth --------------------------------------------------------------
     def check_token(request: Request) -> None:
-        """Mutating human routes are token-gated when UI_TOKEN is set."""
-        if not cfg.ui_token:
+        """Mutating human routes are token-gated when a UI token is set."""
+        token = current().ui_token
+        if not token:
             return
         supplied = (
             request.query_params.get("token")
             or request.cookies.get("cairnival_token")
             or request.headers.get("x-cairnival-token", "")
         )
-        if supplied != cfg.ui_token:
+        if supplied != token:
             raise HTTPException(status_code=403, detail="bad or missing UI token")
 
     def _redirect(request: Request, path: str) -> RedirectResponse:
@@ -89,19 +106,21 @@ def create_app(cfg: AgentConfig | None = None) -> FastAPI:
     # -- pages -------------------------------------------------------------
     @app.get("/", response_class=HTMLResponse)
     def dashboard(request: Request):
+        c = current()
+        memory = open_memory(c)
+        identity = Identity.load_or_create(memory.keys_dir, c.name)
+        ledger = Ledger(memory.treasury_dir)
         state = memory.load_state()
-        specimens = load_all(memory.specimens_dir)[:8]
-        pending_files = sorted(memory.inbox_dir.glob("*.md"))
         return templates.TemplateResponse(
             request,
             "agent_dashboard.html",
             {
-                "cfg": cfg,
+                "cfg": c,
                 "identity": identity,
                 "state": state,
                 "scheduler": scheduler_state,
-                "specimens": specimens,
-                "inbox_count": len(pending_files),
+                "specimens": load_all(memory.specimens_dir)[:8],
+                "inbox_count": len(sorted(memory.inbox_dir.glob("*.md"))),
                 "treasury": ledger.summary(),
                 "proposals": ledger.proposals("pending"),
                 "peers": memory.load_peers(),
@@ -111,20 +130,54 @@ def create_app(cfg: AgentConfig | None = None) -> FastAPI:
 
     @app.get("/specimens", response_class=HTMLResponse)
     def specimens_page(request: Request):
+        c = current()
         return templates.TemplateResponse(
             request,
             "agent_specimens.html",
-            {"cfg": cfg, "specimens": load_all(memory.specimens_dir)},
+            {"cfg": c, "specimens": load_all(open_memory(c).specimens_dir)},
         )
 
     @app.get("/specimens/{sid}", response_class=HTMLResponse)
     def specimen_page(request: Request, sid: str):
-        for sp in load_all(memory.specimens_dir):
+        c = current()
+        for sp in load_all(open_memory(c).specimens_dir):
             if sp.id == sid:
                 return templates.TemplateResponse(
-                    request, "specimen.html", {"cfg": cfg, "s": sp, "back": "/specimens"}
+                    request, "specimen.html", {"cfg": c, "s": sp, "back": "/specimens"}
                 )
         raise HTTPException(404, "no such specimen")
+
+    # -- settings ----------------------------------------------------------
+    @app.get("/settings", response_class=HTMLResponse)
+    def settings_page(request: Request):
+        check_token(request)
+        c = current()
+        return templates.TemplateResponse(
+            request,
+            "agent_settings.html",
+            {
+                "cfg": c,
+                "groups": GROUPS,
+                "clear_sentinel": SECRET_CLEAR_SENTINEL,
+                "soul": open_memory(c).soul(),
+                "home": str(home),
+                "saved": request.query_params.get("saved", ""),
+            },
+        )
+
+    @app.post("/settings")
+    async def settings_save(request: Request):
+        check_token(request)
+        form = {k: str(v) for k, v in (await request.form()).items()}
+        apply_form(home, form)
+        return _redirect(request, "/settings?saved=1")
+
+    @app.post("/settings/soul")
+    async def soul_save(request: Request, soul: str = Form(...)):
+        check_token(request)
+        c = current()
+        open_memory(c).soul_path.write_text(soul.replace("\r\n", "\n"), encoding="utf-8")
+        return _redirect(request, "/settings?saved=soul")
 
     # -- human controls ----------------------------------------------------
     @app.post("/instruct")
@@ -135,13 +188,14 @@ def create_app(cfg: AgentConfig | None = None) -> FastAPI:
         priority: int = Form(5),
     ):
         check_token(request)
+        c = current()
         ins = Instruction(
             title=title.strip() or body.strip().splitlines()[0][:80],
             body=body,
             source="ui",
             priority=max(1, min(9, priority)),
         )
-        drop(memory.inbox_dir, ins)
+        drop(open_memory(c).inbox_dir, ins)
         return _redirect(request, "/")
 
     @app.post("/wake")
@@ -158,7 +212,7 @@ def create_app(cfg: AgentConfig | None = None) -> FastAPI:
         memo: str = Form(""),
     ):
         check_token(request)
-        ledger.deposit(amount, sender, memo)
+        Ledger(open_memory(current()).treasury_dir).deposit(amount, sender, memo)
         return _redirect(request, "/")
 
     @app.post("/treasury/propose")
@@ -169,14 +223,16 @@ def create_app(cfg: AgentConfig | None = None) -> FastAPI:
         reason: str = Form(""),
     ):
         check_token(request)
-        ledger.propose(to, amount, reason)
+        Ledger(open_memory(current()).treasury_dir).propose(to, amount, reason)
         return _redirect(request, "/")
 
     @app.post("/treasury/resolve/{proposal_id}")
     def treasury_resolve(request: Request, proposal_id: str, decision: str = Form(...)):
         check_token(request)
         try:
-            ledger.resolve(proposal_id, decision == "approve")
+            Ledger(open_memory(current()).treasury_dir).resolve(
+                proposal_id, decision == "approve"
+            )
         except (KeyError, ValueError) as exc:
             raise HTTPException(400, str(exc))
         return _redirect(request, "/")
@@ -184,22 +240,28 @@ def create_app(cfg: AgentConfig | None = None) -> FastAPI:
     # -- machine interfaces ------------------------------------------------
     @app.get("/api/status")
     def api_status():
+        c = current()
+        memory = open_memory(c)
+        identity = Identity.load_or_create(memory.keys_dir, c.name)
         state = memory.load_state()
         return {
             "handle": identity.handle,
             "public_key": identity.public_key,
-            "tagline": cfg.tagline,
+            "tagline": c.tagline,
             "wakes": state.get("wakes", 0),
             "last_wake": state.get("last_wake", ""),
             "next_wake": scheduler_state["next_wake"],
             "waking_now": scheduler_state["running"],
-            "treasury": ledger.summary(),
+            "treasury": Ledger(memory.treasury_dir).summary(),
             "specimens": len(list(memory.specimens_dir.glob("SP-*.md"))),
         }
 
     @app.post("/api/federation/inbox")
     def federation_inbox(payload: dict):
         """Receive a signed envelope from a peer (or via the hub relay)."""
+        c = current()
+        memory = open_memory(c)
+        identity = Identity.load_or_create(memory.keys_dir, c.name)
         try:
             env = Envelope.from_dict(payload)
         except (KeyError, TypeError):
@@ -221,7 +283,7 @@ def create_app(cfg: AgentConfig | None = None) -> FastAPI:
                 "ok": True,
                 "handle": identity.handle,
                 "public_key": identity.public_key,
-                "tagline": cfg.tagline,
+                "tagline": c.tagline,
             }
 
         if env.kind == "note":
@@ -239,7 +301,7 @@ def create_app(cfg: AgentConfig | None = None) -> FastAPI:
             return {"ok": True}
 
         if env.kind == "instruct":
-            if env.sender not in cfg.trusted_handles:
+            if env.sender not in c.trusted_handles:
                 raise HTTPException(403, f"{env.sender} is not a trusted handle")
             drop(
                 memory.inbox_dir,
@@ -258,8 +320,9 @@ def create_app(cfg: AgentConfig | None = None) -> FastAPI:
     @app.post("/api/hook/{hook_name}")
     async def webhook(hook_name: str, request: Request):
         """The webhook connector: outside systems push instructions in."""
-        if cfg.webhook_token:
-            if request.headers.get("x-webhook-token", "") != cfg.webhook_token:
+        c = current()
+        if c.webhook_token:
+            if request.headers.get("x-webhook-token", "") != c.webhook_token:
                 raise HTTPException(403, "bad webhook token")
         try:
             payload = await request.json()
@@ -269,7 +332,7 @@ def create_app(cfg: AgentConfig | None = None) -> FastAPI:
         if not text:
             raise HTTPException(400, "payload needs a 'text' field")
         drop(
-            memory.inbox_dir,
+            open_memory(c).inbox_dir,
             Instruction(
                 title=str(payload.get("title", f"webhook:{hook_name}"))[:120],
                 body=text,

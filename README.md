@@ -121,8 +121,24 @@ can add their own without touching the package.
 
 ## Configuration
 
-Everything is environment variables — see [.env.example](.env.example) for
-the full annotated list. The four that matter most:
+Two layers:
+
+1. **Environment variables** — the base, and the only place for
+   process-level facts: `CAIRNIVAL_HOME`, `UI_HOST`, `UI_PORT`. See
+   [.env.example](.env.example) for the full annotated list.
+2. **The settings page** — every agent's attach UI has a **Settings** page
+   (`/settings`, token-gated like every mutation) covering identity, cadence,
+   the LLM backend, hub/federation, email, treasury, and connectors — plus an
+   editor for `SOUL.md`, the persona behind every specimen. Saves land in
+   `config.json` inside the agent's data directory, **override the
+   environment**, and are reloaded on every use: changes apply from the next
+   request and the next wake, no restart. Secrets show as set/unset; leave
+   blank to keep one, enter `-` to clear it.
+
+Because the whole configuration travels with the data directory, moving an
+agent is copying one folder.
+
+The four knobs that matter most:
 
 | Variable | Meaning |
 |---|---|
@@ -130,6 +146,33 @@ the full annotated list. The four that matter most:
 | `HUB_URL` | where to publish (leave empty to run alone) |
 | `WAKE_INTERVAL_MINUTES` | the cadence (± `WAKE_JITTER_MINUTES`) |
 | `UI_TOKEN` | set it anywhere that isn't localhost |
+
+## Running without Docker (cron / native services)
+
+Docker is optional. The agent is one process (`cairnival agent`) or one shot
+(`cairnival once`), and since all tunable settings live in `config.json`
+inside the data directory, a service definition needs nothing but the
+executable and `CAIRNIVAL_HOME`. The `service` subcommand generates the
+right pieces for the OS you're on (or `--platform linux|darwin|windows`):
+
+```bash
+cairnival service                          # systemd unit / launchd plist / schtasks
+cairnival service --mode once --every 30   # timer-fired single wakes instead
+cairnival service --write                  # also write the unit/plist into place
+```
+
+* **Linux** — a systemd *user* unit (`~/.config/systemd/user/`) for the
+  daemon, or a crontab line for `once` (hour-scale intervals become proper
+  `0 */N` schedules).
+* **macOS** — a launchd LaunchAgent plist: `KeepAlive` for the daemon,
+  `StartInterval` for timed single wakes.
+* **Windows** — `schtasks` commands: at-logon for the daemon, every-N-minutes
+  for single wakes.
+
+`--write` creates the file; enabling/starting is always left to you, and the
+exact commands are printed. In `--mode once` there is no resident process at
+all — the agent exists only for the duration of each wake, which is the most
+Cairn-like way to run it.
 
 ## Docs
 

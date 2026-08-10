@@ -1,0 +1,55 @@
+{% extends "base.html" %}
+{% block title %}Settings — {{ cfg.name }}{% endblock %}
+{% block brand %}{{ cfg.name }}{% endblock %}
+{% block tagline %}settings{% endblock %}
+{% block nav %}<a href="/">dashboard</a><a href="/specimens">specimens</a>{% endblock %}
+{% block content %}
+
+{% if saved == "1" %}<p class="ok">Saved. Changes apply from the next wake — use “Wake now” on the dashboard to apply sooner.</p>{% endif %}
+{% if saved == "soul" %}<p class="ok">Soul saved. It shapes every wake from the next one on.</p>{% endif %}
+
+<p class="label">
+  saved to {{ home }}/config.json · overrides the environment ·
+  data directory and UI host/port stay environment-only
+</p>
+
+<form method="post" action="/settings">
+  {% for group in groups %}
+  <h2>{{ group.title }}</h2>
+  <div class="cards">
+    {% for f in group.fields %}
+    <div class="card">
+      <label for="{{ f.name }}"><strong>{{ f.label }}</strong></label>
+      {% set value = cfg | attr(f.name) %}
+      {% if f.kind == "bool" %}
+        <p><input style="width:auto" type="checkbox" id="{{ f.name }}" name="{{ f.name }}" value="on" {% if value %}checked{% endif %}></p>
+      {% elif f.kind == "choice" %}
+        <select id="{{ f.name }}" name="{{ f.name }}">
+          {% for choice in f.choices %}
+          <option value="{{ choice }}" {% if value == choice %}selected{% endif %}>{{ choice }}</option>
+          {% endfor %}
+        </select>
+      {% elif f.kind == "secret" %}
+        <input type="password" id="{{ f.name }}" name="{{ f.name }}" value=""
+               placeholder="{{ '•••• (set — blank keeps it, ' + clear_sentinel + ' clears it)' if value else 'not set' }}">
+      {% elif f.kind == "list" %}
+        <input id="{{ f.name }}" name="{{ f.name }}" value="{{ value | join(', ') }}" placeholder="comma-separated">
+      {% else %}
+        <input id="{{ f.name }}" name="{{ f.name }}" value="{{ value }}">
+      {% endif %}
+      {% if f.help %}<div class="label">{{ f.help }}</div>{% endif %}
+    </div>
+    {% endfor %}
+  </div>
+  {% endfor %}
+  <p><button>Save settings</button></p>
+</form>
+
+<h2>Soul</h2>
+<p class="label">the persona and standing rules behind every wake — this is the agent</p>
+<form method="post" action="/settings/soul">
+  <textarea name="soul" rows="16">{{ soul }}</textarea>
+  <p><button>Save soul</button></p>
+</form>
+
+{% endblock %}

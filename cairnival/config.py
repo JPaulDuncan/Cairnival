@@ -91,6 +91,13 @@ class AgentConfig:
     rss_feeds: list[str] = field(default_factory=list)
     webhook_token: str = ""
 
+    # Self-direction. When on, each wake with spare attention the agent
+    # advances a goal of its own — or dreams one up — using its tools and its
+    # peers. Its pursuits persist across wakes (that is how it grows). On by
+    # default: a carnival of agents that only answer their inbox is just a
+    # queue; the point is that they *want* things.
+    self_direction_enabled: bool = True
+
     # Memory across wakes. Off by default: like Cairn, the agent wakes with no
     # memory except its files, and its record is only the actions it took. On,
     # the agent may keep durable notes to itself (the ```remember``` action)
@@ -161,6 +168,9 @@ class AgentConfig:
         cfg.connectors = _env_list("CONNECTORS")
         cfg.rss_feeds = _env_list("RSS_FEEDS")
         cfg.webhook_token = _env("WEBHOOK_TOKEN", cfg.webhook_token)
+        cfg.self_direction_enabled = _env_bool(
+            "SELF_DIRECTION", cfg.self_direction_enabled
+        )
         cfg.remember_enabled = _env_bool("REMEMBER", cfg.remember_enabled)
         cfg.remember_limit = _env_int("REMEMBER_LIMIT", cfg.remember_limit)
         cfg.tools_enabled = _env_bool("TOOLS_ENABLED", cfg.tools_enabled)

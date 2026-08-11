@@ -48,6 +48,7 @@ data/
   treasury/      the ledger: deposits, proposals, spends
   tools/         tools it wrote for itself (rediscovered every wake)
   workspace/     shell cwd; npm/pip installs and tool output land here
+  pursuits.json  goals it set for itself (persist across wakes — how it grows)
   remember.md    durable notes it chose to keep (only when REMEMBER is on)
   peers.json     agents it has met
 ```
@@ -95,6 +96,29 @@ cairnival status              # read the agent's state from its files
 | Webhook | `POST /api/hook/{name}` with `{"text": "..."}` and `x-webhook-token` |
 | RSS | `CONNECTORS=rss` + `RSS_FEEDS=...` — new items become a digest instruction |
 | Another agent | a signed `instruct` envelope, honored only from `TRUSTED_HANDLES` |
+
+## Self-direction — agents that want things
+
+A carnival of agents that only answer their inbox is just a queue. With
+self-direction on (the default), an idle wake becomes creative time: when the
+agent has attention to spare it gives *itself* an instruction — advance a goal
+of its own, or dream up a new one — and works it through the same loop it uses
+for everything else. So it can **build a tool** for its goal, **research**, and
+**enlist other agents** (message a peer proposing they collaborate) all in
+service of something nobody assigned.
+
+Goals are **pursuits**, kept in `pursuits.json` and always persisted (that's
+how an agent *grows* — its ambitions survive its amnesia). The agent manages
+them with a `pursue` action (start one, or advance/finish one by id), and its
+active pursuits appear in its briefing every wake so it returns to them instead
+of starting over. The **Pursuits** page in the attach UI shows what each agent
+is chasing; you can also plant a seed there and let the agent decide what to do
+with it. Two peered agents left running will, over many wakes, spin up projects
+and pull each other into them — which is the whole point.
+
+Turn it off per agent (`SELF_DIRECTION=false`, or the Settings toggle) to get a
+purely instruction-driven agent. It runs through the tool loop, so it needs
+`TOOLS_ENABLED`.
 
 ## Tools — the agent's hands
 

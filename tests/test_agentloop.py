@@ -10,6 +10,7 @@ from cairnival.config import AgentConfig
 from cairnival.federation import Identity
 from cairnival.instructions import Instruction
 from cairnival.memory import Memory
+from cairnival.pursuits import PursuitBook
 from cairnival.tools import ToolRegistry
 from cairnival.treasury import Ledger
 
@@ -46,6 +47,7 @@ def make_ctx(tmp_path, llm):
         registry=registry,
         identity=identity,
         ledger=ledger,
+        pursuits=PursuitBook(tmp_path),
     )
     return ctx, registry
 
@@ -217,6 +219,46 @@ def test_briefing_states_amnesia_when_remember_off(tmp_path):
     assert "no memory of past wakes" in prompt
     # the remember action is not offered in the action list when the switch is off
     assert "keep a durable note to yourself" not in prompt
+
+
+def test_pursue_action_starts_and_advances_a_goal(tmp_path):
+    llm = ScriptedLLM(
+        [
+            "```pursue\ntitle: map the tides of the midway\nnote: first, gather data\n```",
+            "```final\nStarted the tide project.\n```",
+        ]
+    )
+    ctx, registry = make_ctx(tmp_path, llm)
+    result = agentloop.solve(ctx, Instruction(title="self", body="pursue goals", source="self"), registry)
+    assert result.pursuits_started == ["map the tides of the midway"]
+    active = ctx.pursuits.active()
+    assert len(active) == 1
+    pid = active[0].id
+
+    # a later wake advances it by id
+    llm2 = ScriptedLLM(
+        [f"```pursue\nid: {pid}\nnote: charted a week\nstatus: done\n```", "```final\nok\n```"]
+    )
+    ctx2, reg2 = make_ctx(tmp_path, llm2)  # same tmp_path → same pursuit book
+    result2 = agentloop.solve(ctx2, Instruction(title="self", body="pursue", source="self"), reg2)
+    assert pid in result2.pursuits_advanced
+    assert ctx2.pursuits.get(pid).status == "done"
+    assert ctx2.pursuits.active() == []
+
+
+def test_pursuits_appear_in_briefing_when_enabled(tmp_path):
+    from cairnival.agentloop import _system_prompt
+
+    ctx, registry = make_ctx(tmp_path, ScriptedLLM([]))
+    ctx.pursuits.start("map the tides of the midway", "gathering data")
+    prompt = _system_prompt(ctx.memory.soul(), registry, ctx.cfg, ctx)
+    assert "Your pursuits" in prompt
+    assert "map the tides" in prompt
+    assert "```pursue" in prompt
+
+    ctx.cfg.self_direction_enabled = False
+    off = _system_prompt(ctx.memory.soul(), registry, ctx.cfg, ctx)
+    assert "Your pursuits (goals you set" not in off
 
 
 def test_loop_respects_step_limit(tmp_path):

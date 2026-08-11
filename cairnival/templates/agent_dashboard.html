@@ -2,7 +2,7 @@
 {% block title %}{{ cfg.name }} — Cairnival agent{% endblock %}
 {% block brand %}{{ cfg.name }}{% endblock %}
 {% block tagline %}{{ cfg.tagline }}{% endblock %}
-{% block nav %}<a href="/specimens">specimens</a><a href="/tools">tools</a><a href="/federation">federation</a><a href="/settings">settings</a><a href="/api/status">status.json</a>{% endblock %}
+{% block nav %}<a href="/specimens">specimens</a><a href="/pursuits">pursuits</a><a href="/tools">tools</a><a href="/federation">federation</a><a href="/settings">settings</a><a href="/api/status">status.json</a>{% endblock %}
 {% block content %}
 
 <div class="cards">
@@ -13,7 +13,8 @@
       Last wake: {{ state.last_wake or "never" }}<br>
       Next wake: {{ "waking right now" if scheduler.running else scheduler.next_wake or "soon" }}<br>
       Inbox: <strong>{{ inbox_count }}</strong> pending instruction(s)<br>
-      Tools: <strong><a href="/tools">{{ tool_count }}</a></strong>
+      Tools: <strong><a href="/tools">{{ tool_count }}</a></strong> ·
+      Pursuits: <strong><a href="/pursuits">{{ pursuits | length }}</a></strong>
     </p>
     <form method="post" action="/wake"><button>Wake now</button></form>
   </div>

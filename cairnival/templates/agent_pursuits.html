@@ -1,0 +1,50 @@
+{% extends "base.html" %}
+{% block title %}Pursuits — {{ cfg.name }}{% endblock %}
+{% block brand %}{{ cfg.name }}{% endblock %}
+{% block tagline %}what it's chasing{% endblock %}
+{% block nav %}<a href="/">dashboard</a><a href="/specimens">specimens</a><a href="/tools">tools</a><a href="/federation">federation</a>{% endblock %}
+{% block content %}
+
+<p class="label">
+  goals the agent set for itself · {{ summary.active }} active, {{ summary.done }} done ·
+  self-direction is {{ "on" if cfg.self_direction_enabled else "OFF (enable it in settings)" }}
+</p>
+
+<h2>Pursuits</h2>
+{% if pursuits %}
+<div class="cards">
+  {% for p in pursuits %}
+  <div class="card">
+    <h3>{{ p.title }}</h3>
+    {% if p.note %}<p>{{ p.note }}</p>{% endif %}
+    <div class="specimen-label">
+      {{ p.id }} · <strong>{{ p.status }}</strong> · started wake {{ p.wake }}<br>
+      updated {{ p.updated }}
+    </div>
+    {% if p.status == "active" %}
+    <form method="post" action="/pursuits/{{ p.id }}/status" style="margin-top:.5rem">
+      <input type="hidden" name="status" value="done">
+      <button class="quiet">Mark done</button>
+    </form>
+    <form method="post" action="/pursuits/{{ p.id }}/status">
+      <input type="hidden" name="status" value="dropped">
+      <button class="quiet">Drop</button>
+    </form>
+    {% endif %}
+  </div>
+  {% endfor %}
+</div>
+{% else %}
+<p><em>No pursuits yet. The agent will dream one up on its next self-directed
+wake — or you can plant a seed below.</em></p>
+{% endif %}
+
+<h2>Plant a seed</h2>
+<p class="label">suggest a goal; the agent decides what to do with it</p>
+<form method="post" action="/pursuits/start">
+  <input name="title" required placeholder="a goal, e.g. 'map the tides of the midway'">
+  <textarea name="note" rows="2" placeholder="context (optional)"></textarea>
+  <button>Add pursuit</button>
+</form>
+
+{% endblock %}

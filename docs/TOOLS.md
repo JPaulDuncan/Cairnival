@@ -34,6 +34,7 @@ names the action:
 | ` ```send:<agent> ` | message another agent; it lands in their inbox and they can reply |
 | ` ```propose ` | propose a treasury spend (`to:`/`amount:`/`reason:`); a human co-signs |
 | ` ```remember ` | keep a durable note to yourself (only when `REMEMBER` is on) |
+| ` ```pursue ` | set or advance a goal of your own (only when `SELF_DIRECTION` is on) |
 | ` ```final ` | the block body is the answer; the loop ends |
 
 `shell` is accepted as an alias for `run`.

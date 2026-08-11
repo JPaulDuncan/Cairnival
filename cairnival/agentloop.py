@@ -42,7 +42,8 @@ from .tools import ToolRegistry, ToolError, parse_args
 
 _FENCE_RE = re.compile(r"```([^\n`]*)\n(.*?)```", re.DOTALL)
 _ACTION_VERBS = (
-    "run", "shell", "use", "write-tool", "send", "propose", "remember", "final"
+    "run", "shell", "use", "write-tool", "send", "propose", "remember",
+    "pursue", "final",
 )
 
 
@@ -68,6 +69,8 @@ class LoopResult:
     messages_sent: list[str] = field(default_factory=list)  # peer handles
     proposals: list[str] = field(default_factory=list)  # spend proposal ids
     remembered: int = 0  # count of notes committed to durable memory
+    pursuits_started: list[str] = field(default_factory=list)  # titles
+    pursuits_advanced: list[str] = field(default_factory=list)  # ids
     # A concise, ordered record of the ACTIONS taken — never the model's
     # reasoning. This is what the journal persists.
     actions: list[str] = field(default_factory=list)
@@ -145,7 +148,25 @@ def _describe(action: Action) -> str:
         return f"proposed spend of {fields.get('amount', '?')} to {fields.get('to', '?')}"
     if action.kind == "remember":
         return "recorded a memory"
+    if action.kind == "pursue":
+        fields = _parse_kv(action.body)
+        if fields.get("id"):
+            return f"advanced pursuit {fields.get('id')}"
+        return f"started pursuit: {fields.get('title', '?')[:80]}"
     return action.kind
+
+
+def _pursuits_block(ctx, cfg) -> str:
+    if not cfg.self_direction_enabled:
+        return ""
+    book = getattr(ctx, "pursuits", None)
+    if book is None:
+        return ""
+    try:
+        listing = book.briefing()
+    except Exception:
+        return ""
+    return "Your pursuits (goals you set for yourself):\n" + listing + "\n\n"
 
 
 def _peer_roster(ctx) -> str:
@@ -235,8 +256,16 @@ def _system_prompt(soul: str, registry: ToolRegistry, cfg, ctx) -> str:
             if cfg.remember_enabled
             else ""
         )
+        + (
+            "- ```pursue``` — set or advance a goal of your own. Body: `title:` "
+            "and `note:` to start one; `id:` (and `note:`/`status: done`) to "
+            "advance one. Pursuits persist across wakes — this is how you grow.\n"
+            if cfg.self_direction_enabled
+            else ""
+        )
         + "- ```final``` — your answer, when the work is done.\n\n"
         + _remembered(ctx, cfg)
+        + _pursuits_block(ctx, cfg)
         + "Your tools right now:\n"
         f"{registry.catalog()}\n\n"
         "Other agents you can reach:\n"
@@ -304,6 +333,38 @@ def _observe(action: Action, registry: ToolRegistry, cfg, result: LoopResult, ct
         ctx.memory.remember_append(note)
         result.remembered += 1
         return "kept that in memory; you will see it in your briefing next wake."
+    if action.kind == "pursue":
+        book = getattr(ctx, "pursuits", None)
+        if book is None:
+            return "pursue: no pursuit book in this context"
+        fields = _parse_kv(action.body)
+        pid = fields.get("id", "").strip()
+        status = fields.get("status", "").strip() or None
+        note = fields.get("note", "")
+        wake = 0
+        try:
+            wake = int(ctx.memory.load_state().get("wakes", 0)) + 1
+        except Exception:
+            pass
+        if pid:
+            try:
+                p = book.update(pid, note=note, status=status)
+            except (KeyError, ValueError) as exc:
+                return f"pursue: {exc}"
+            result.pursuits_advanced.append(p.id)
+            return f"updated pursuit {p.id} ({p.status}): {p.title}"
+        title = fields.get("title", "").strip()
+        if not title:
+            return "pursue: give a `title:` to start a pursuit, or an `id:` to update one"
+        try:
+            p = book.start(title, note, wake)
+        except ValueError as exc:
+            return f"pursue: {exc}"
+        result.pursuits_started.append(p.title)
+        return (
+            f"started pursuit {p.id}: {p.title}. It persists across wakes; "
+            "advance it with ```pursue``` (id: " + p.id + ")."
+        )
     if action.kind == "run":
         res = registry.run_shell(action.body)
         return res.render(limit)

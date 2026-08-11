@@ -115,3 +115,27 @@ def test_hub_rejects_impostor_key(tmp_path, hub):
     # rejected at the pinned-key check: once a handle has said hello, only
     # the key from that first hello is believed
     assert resp.status_code == 403
+
+
+def test_self_directed_idle_wake(tmp_path):
+    """An idle wake is creative time: nobody instructed the agent, but it works
+    on a goal of its own."""
+    cfg = AgentConfig()
+    cfg.name = "rustle"
+    cfg.home = tmp_path / "solo"
+    cfg.llm_backend = "echo"  # self-direction and tools on by default
+    report = run_wake(cfg)
+    assert report.handled == 0          # no one gave it work
+    assert report.self_directed is True  # it worked anyway
+    assert report.specimen is not None
+    assert "self-directed" in report.specimen.tags
+
+
+def test_self_direction_switch_off(tmp_path):
+    cfg = AgentConfig()
+    cfg.name = "rustle"
+    cfg.home = tmp_path / "quiet"
+    cfg.llm_backend = "echo"
+    cfg.self_direction_enabled = False
+    report = run_wake(cfg)
+    assert report.self_directed is False

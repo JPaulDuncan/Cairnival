@@ -152,6 +152,21 @@ GROUPS: list[Group] = [
         ],
     ),
     Group(
+        "Self-direction",
+        [
+            Field(
+                "self_direction_enabled",
+                "Let this agent pursue its own goals",
+                "bool",
+                help=(
+                    "on (default): each wake with spare attention it advances a "
+                    "pursuit of its own or dreams one up, using its tools and "
+                    "peers. off: it only works what others give it."
+                ),
+            ),
+        ],
+    ),
+    Group(
         "Memory",
         [
             Field(

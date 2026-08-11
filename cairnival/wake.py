@@ -29,6 +29,7 @@ from .federation import Envelope, Identity, seal, verify
 from .instructions import Instruction, archive, drop, pending
 from .llm import LLMBackend, LLMError, build_backend
 from .memory import Memory, utcnow
+from .pursuits import PursuitBook
 from .specimens import Specimen, next_id, save
 from .tools import ToolRegistry
 from .treasury import Ledger
@@ -43,6 +44,7 @@ class WakeContext:
     ledger: Ledger
     llm: LLMBackend
     registry: ToolRegistry
+    pursuits: PursuitBook
     log: list[str] = field(default_factory=list)
 
     def note(self, line: str) -> None:
@@ -53,10 +55,12 @@ class WakeContext:
 class WakeReport:
     wake_number: int
     specimen: Specimen | None
-    handled: int
+    handled: int  # instructions from others (excludes self-directed work)
     log: list[str]
     tools_written: list[str] = field(default_factory=list)
     tools_used: list[str] = field(default_factory=list)
+    self_directed: bool = False
+    pursuits_started: list[str] = field(default_factory=list)
 
 
 def _gather_treasury_instructions(ctx: WakeContext) -> list[Instruction]:
@@ -75,6 +79,31 @@ def _gather_treasury_instructions(ctx: WakeContext) -> list[Instruction]:
         )
         ctx.ledger.consume_memo(dep["id"])
     return out
+
+
+def _self_directed_instruction(ctx: WakeContext) -> Instruction:
+    """A prompt the agent gives *itself* when it has spare attention: advance a
+    goal of its own, or dream one up. Not from anyone's inbox — this is where
+    self-determination lives."""
+    listing = ctx.pursuits.briefing()
+    body = (
+        "No one assigned this. You have room this wake to pursue your OWN "
+        "goals.\n\n"
+        f"Your active pursuits:\n{listing}\n\n"
+        "Take one real step now: advance a pursuit, or — if none here calls to "
+        "you, or you see something better worth doing — dream up a new one. You "
+        "may build a tool, run commands, research, or enlist another agent "
+        "(send them a message proposing you work together). Record what you "
+        "start or advance with the ```pursue``` action so it survives to your "
+        "next wake. Prefer a concrete step over a plan; small progress every "
+        "wake compounds."
+    )
+    return Instruction(
+        title="Pursue your own goals",
+        body=body,
+        source="self",
+        priority=8,
+    )
 
 
 def _work_instruction(ctx: WakeContext, ins: Instruction) -> dict[str, Any]:
@@ -96,6 +125,8 @@ def _work_instruction(ctx: WakeContext, ins: Instruction) -> dict[str, Any]:
             "messages_sent": outcome.messages_sent,
             "proposals": outcome.proposals,
             "remembered": outcome.remembered,
+            "pursuits_started": outcome.pursuits_started,
+            "pursuits_advanced": outcome.pursuits_advanced,
             "steps": len(outcome.steps),
         }
 
@@ -184,6 +215,10 @@ def _write_specimen(
         tags.append("treasury")
     if any(w.get("remembered") for w in worked):
         tags.append("remembered")
+    if any(w.get("source") == "self" for w in worked):
+        tags.append("self-directed")
+    if any(w.get("pursuits_started") for w in worked):
+        tags.append("dreamer")
 
     specimen = Specimen(
         id=next_id(ctx.memory.specimens_dir),
@@ -382,7 +417,8 @@ def run_wake(cfg: AgentConfig) -> WakeReport:
     ledger = Ledger(memory.treasury_dir)
     llm = build_backend(cfg)
     registry = ToolRegistry(memory.tools_dir, memory.workspace_dir, cfg)
-    ctx = WakeContext(cfg, memory, state, identity, ledger, llm, registry)
+    pursuits = PursuitBook(cfg.home)
+    ctx = WakeContext(cfg, memory, state, identity, ledger, llm, registry, pursuits)
 
     wake_number = int(state.get("wakes", 0)) + 1
     ctx.note(f"wake {wake_number} at {utcnow()}")
@@ -433,6 +469,17 @@ def run_wake(cfg: AgentConfig) -> WakeReport:
             replies.append((channel, ins.reply_to, result["answer"]))
         archive(ins, memory.archive_dir)
 
+    handled = len(worked)  # count of instructions others gave the agent
+
+    # 3b. self-direction: with attention to spare, pursue its own goals -----
+    self_directed = False
+    if cfg.self_direction_enabled and cfg.tools_enabled and handled < cfg.max_instructions_per_wake:
+        self_result = _work_instruction(ctx, _self_directed_instruction(ctx))
+        worked.append(self_result)
+        tools_written.extend(self_result.get("tools_written", []))
+        tools_used.extend(self_result.get("tools_used", []))
+        self_directed = True
+
     # 4. write the specimen -------------------------------------------------
     specimen = _write_specimen(ctx, wake_number, worked)
     ctx.note(f"wrote specimen {specimen.id}: {specimen.title}")
@@ -475,8 +522,18 @@ def run_wake(cfg: AgentConfig) -> WakeReport:
     state["last_wake"] = utcnow()
     memory.save_state(ctx.state)
 
+    pursuits_started = [
+        title for w in worked for title in w.get("pursuits_started", [])
+    ]
     return WakeReport(
-        wake_number, specimen, len(worked), ctx.log, tools_written, tools_used
+        wake_number,
+        specimen,
+        handled,
+        ctx.log,
+        tools_written,
+        tools_used,
+        self_directed,
+        pursuits_started,
     )
 
 

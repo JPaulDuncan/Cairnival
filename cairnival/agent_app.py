@@ -28,6 +28,7 @@ from .federation import Envelope, Identity, verify
 from . import messaging
 from .instructions import Instruction, drop
 from .memory import Memory, utcnow
+from .pursuits import PursuitBook
 from .settings import GROUPS, SECRET_CLEAR_SENTINEL, apply_form, load_agent_config
 from .specimens import load_all
 from .tools import ToolRegistry, parse_args
@@ -125,6 +126,7 @@ def create_app(cfg: AgentConfig | None = None) -> FastAPI:
                 "specimens": load_all(memory.specimens_dir)[:8],
                 "inbox_count": len(sorted(memory.inbox_dir.glob("*.md"))),
                 "tool_count": len(registry.discover()),
+                "pursuits": PursuitBook(home).active(),
                 "treasury": ledger.summary(),
                 "proposals": ledger.proposals("pending"),
                 "peers": memory.load_peers(),
@@ -150,6 +152,38 @@ def create_app(cfg: AgentConfig | None = None) -> FastAPI:
                     request, "specimen.html", {"cfg": c, "s": sp, "back": "/specimens"}
                 )
         raise HTTPException(404, "no such specimen")
+
+    # -- pursuits ----------------------------------------------------------
+    @app.get("/pursuits", response_class=HTMLResponse)
+    def pursuits_page(request: Request):
+        c = current()
+        open_memory(c)
+        book = PursuitBook(home)
+        return templates.TemplateResponse(
+            request,
+            "agent_pursuits.html",
+            {"cfg": c, "pursuits": book.all(), "summary": book.summary()},
+        )
+
+    @app.post("/pursuits/start")
+    def pursuits_start(request: Request, title: str = Form(...), note: str = Form("")):
+        """A human can also plant a seed; the agent tends it from there."""
+        check_token(request)
+        c = current()
+        open_memory(c)
+        PursuitBook(home).start(title, note)
+        return _redirect(request, "/pursuits")
+
+    @app.post("/pursuits/{pursuit_id}/status")
+    def pursuits_status(request: Request, pursuit_id: str, status: str = Form(...)):
+        check_token(request)
+        c = current()
+        open_memory(c)
+        try:
+            PursuitBook(home).update(pursuit_id, status=status)
+        except (KeyError, ValueError) as exc:
+            raise HTTPException(400, str(exc))
+        return _redirect(request, "/pursuits")
 
     # -- federation --------------------------------------------------------
     @app.get("/federation", response_class=HTMLResponse)
@@ -364,6 +398,7 @@ def create_app(cfg: AgentConfig | None = None) -> FastAPI:
             "tools": len(
                 ToolRegistry(memory.tools_dir, memory.workspace_dir, c).discover()
             ),
+            "pursuits": PursuitBook(home).summary(),
         }
 
     @app.post("/api/federation/inbox")

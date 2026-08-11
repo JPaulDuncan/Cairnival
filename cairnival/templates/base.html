@@ -8,34 +8,126 @@
   :root {
     --bg: #f6f3ec; --ink: #26221b; --dim: #6e675c; --line: #d8d2c4;
     --card: #fffdf7; --accent: #8a4b2d; --accent2: #2d6a4f; --paid: #9a6a00;
+    --glow: rgba(138,75,45,.18); --shadow: rgba(40,34,24,.10);
+    --lite1: #d1495b; --lite2: #edae49; --lite3: #2d6a4f; --lite4: #3b6ea5; --lite5: #8a4b2d;
   }
   @media (prefers-color-scheme: dark) {
     :root {
       --bg: #1c1a16; --ink: #e8e2d5; --dim: #9a927f; --line: #3a362d;
       --card: #24211b; --accent: #d99a6c; --accent2: #7cc0a0; --paid: #d9b23c;
+      --glow: rgba(217,154,108,.22); --shadow: rgba(0,0,0,.35);
+      --lite1: #e26d7e; --lite2: #f0c05a; --lite3: #7cc0a0; --lite4: #6f9fd8; --lite5: #d99a6c;
     }
   }
   * { box-sizing: border-box; }
+  html { scroll-behavior: smooth; }
   body {
     margin: 0; background: var(--bg); color: var(--ink);
     font: 16px/1.6 Georgia, 'Times New Roman', serif;
+    -webkit-font-smoothing: antialiased;
   }
+
+  /* --- carnival lights bunting across the very top --- */
+  .bunting {
+    height: 6px; width: 100%;
+    background: repeating-linear-gradient(90deg,
+      var(--lite1) 0 14px, var(--lite2) 14px 28px, var(--lite3) 28px 42px,
+      var(--lite4) 42px 56px, var(--lite5) 56px 70px);
+    background-size: 70px 6px;
+    animation: bunting-flow 6s linear infinite;
+    opacity: .9;
+  }
+  @keyframes bunting-flow { to { background-position: 70px 0; } }
+
+  /* --- heartbeat bar: a thin sweeping glow, alive while waking --- */
+  #pulse-bar {
+    height: 3px; width: 100%; overflow: hidden; background: transparent;
+    position: relative;
+  }
+  #pulse-bar::before {
+    content: ""; position: absolute; inset: 0; left: -40%;
+    width: 40%;
+    background: linear-gradient(90deg, transparent, var(--accent), transparent);
+    opacity: 0; transition: opacity .4s;
+  }
+  body.is-waking #pulse-bar::before {
+    opacity: 1; animation: sweep 1.1s ease-in-out infinite;
+  }
+  @keyframes sweep { 0% { left: -40%; } 100% { left: 100%; } }
+
   header {
-    border-bottom: 3px double var(--line); padding: 1.2rem 1.5rem;
+    border-bottom: 1px solid var(--line); padding: 1.1rem 1.5rem;
     display: flex; gap: 1rem; align-items: baseline; flex-wrap: wrap;
+    background: linear-gradient(180deg, var(--card), transparent);
   }
   header h1 { margin: 0; font-size: 1.3rem; letter-spacing: .04em; }
-  header h1 a { color: var(--ink); text-decoration: none; }
+  header h1 a {
+    color: var(--ink); text-decoration: none;
+    background: linear-gradient(90deg, var(--accent), var(--accent2), var(--accent));
+    background-size: 200% auto; -webkit-background-clip: text; background-clip: text;
+    -webkit-text-fill-color: transparent;
+    animation: sheen 8s linear infinite;
+  }
+  @keyframes sheen { to { background-position: 200% center; } }
   header .tag { color: var(--dim); font-style: italic; }
-  nav a { color: var(--accent); margin-right: .9rem; }
+  nav { margin-left: auto; }
+  nav a {
+    color: var(--accent); margin-left: 1rem; text-decoration: none;
+    position: relative; padding-bottom: 2px;
+  }
+  nav a::after {
+    content: ""; position: absolute; left: 0; bottom: 0; height: 2px; width: 0;
+    background: var(--accent); transition: width .22s ease;
+  }
+  nav a:hover::after { width: 100%; }
+
+  /* --- live status pill --- */
+  .status {
+    display: inline-flex; align-items: center; gap: .5rem;
+    font: 12px/1 ui-monospace, monospace; letter-spacing: .04em;
+    padding: .4rem .7rem; border: 1px solid var(--line); border-radius: 999px;
+    background: var(--card); color: var(--dim); white-space: nowrap;
+  }
+  .status .dot {
+    width: 9px; height: 9px; border-radius: 50%; background: var(--accent2);
+    box-shadow: 0 0 0 0 var(--glow); flex: none;
+  }
+  .status.waking { color: var(--accent); border-color: var(--accent); }
+  .status.waking .dot {
+    background: var(--accent); animation: throb 1s ease-in-out infinite;
+  }
+  @keyframes throb {
+    0%,100% { box-shadow: 0 0 0 0 var(--glow); transform: scale(1); }
+    50% { box-shadow: 0 0 0 6px transparent; transform: scale(1.25); }
+  }
+  .status.idle .dot { animation: breathe 3s ease-in-out infinite; }
+  @keyframes breathe { 0%,100% { opacity: .55; } 50% { opacity: 1; } }
+  .ellipsis::after {
+    content: ""; animation: dots 1.4s steps(4,end) infinite;
+  }
+  @keyframes dots { 0% { content: ""; } 25% { content: "."; } 50% { content: ".."; } 75% { content: "..."; } }
+
   main { max-width: 60rem; margin: 0 auto; padding: 1.5rem; }
   .cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(16rem, 1fr)); gap: 1rem; }
   .card {
-    background: var(--card); border: 1px solid var(--line); border-radius: 4px;
+    background: var(--card); border: 1px solid var(--line); border-radius: 8px;
     padding: 1rem 1.2rem; overflow-wrap: anywhere;
+    box-shadow: 0 1px 2px var(--shadow);
+    transition: transform .18s ease, box-shadow .18s ease, border-color .18s ease;
+    animation: fade-up .5s both;
   }
+  .card:hover {
+    transform: translateY(-3px); box-shadow: 0 8px 24px var(--shadow);
+    border-color: var(--accent);
+  }
+  .cards > .card:nth-child(1){animation-delay:.02s} .cards > .card:nth-child(2){animation-delay:.06s}
+  .cards > .card:nth-child(3){animation-delay:.10s} .cards > .card:nth-child(4){animation-delay:.14s}
+  .cards > .card:nth-child(5){animation-delay:.18s} .cards > .card:nth-child(6){animation-delay:.22s}
+  .cards > .card:nth-child(7){animation-delay:.26s} .cards > .card:nth-child(8){animation-delay:.30s}
+  @keyframes fade-up { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: none; } }
   .card h3 { margin: 0 0 .3rem; font-size: 1.05rem; }
   .card h3 a { color: var(--accent); text-decoration: none; }
+  .card h3 a:hover { text-decoration: underline; }
   .label {
     font: 12px/1.4 ui-monospace, monospace; color: var(--dim);
     text-transform: uppercase; letter-spacing: .08em;
@@ -45,33 +137,119 @@
     font: 12px/1.6 ui-monospace, monospace; color: var(--dim);
   }
   table { border-collapse: collapse; width: 100%; }
-  td, th { border-bottom: 1px solid var(--line); padding: .4rem .5rem; text-align: left; }
+  td, th { border-bottom: 1px solid var(--line); padding: .5rem .5rem; text-align: left; }
+  tr { transition: background .15s; }
+  tbody tr:hover, table tr:hover { background: var(--glow); }
   form.inline { display: inline; }
   input, textarea, select {
-    font: inherit; color: var(--ink); background: var(--card);
-    border: 1px solid var(--line); border-radius: 3px; padding: .4rem .5rem;
-    width: 100%; margin-bottom: .5rem;
+    font: inherit; color: var(--ink); background: var(--bg);
+    border: 1px solid var(--line); border-radius: 6px; padding: .5rem .6rem;
+    width: 100%; margin-bottom: .5rem; transition: border-color .15s, box-shadow .15s;
+  }
+  input:focus, textarea:focus, select:focus {
+    outline: none; border-color: var(--accent); box-shadow: 0 0 0 3px var(--glow);
   }
   button {
     font: inherit; background: var(--accent); color: var(--bg); border: 0;
-    border-radius: 3px; padding: .4rem 1rem; cursor: pointer;
+    border-radius: 6px; padding: .5rem 1.1rem; cursor: pointer;
+    transition: transform .12s ease, filter .15s ease, box-shadow .15s ease;
+    box-shadow: 0 1px 2px var(--shadow);
   }
+  button:hover { filter: brightness(1.08); transform: translateY(-1px); box-shadow: 0 4px 12px var(--shadow); }
+  button:active { transform: translateY(0) scale(.97); }
   button.quiet { background: var(--line); color: var(--ink); }
-  pre { background: var(--card); border: 1px solid var(--line); padding: .8rem; overflow-x: auto; }
-  article.entry { background: var(--card); border: 1px solid var(--line); border-radius: 4px; padding: 1.5rem 2rem; }
+  pre {
+    background: var(--card); border: 1px solid var(--line); border-radius: 6px;
+    padding: .8rem; overflow-x: auto;
+  }
+  article.entry {
+    background: var(--card); border: 1px solid var(--line); border-radius: 8px;
+    padding: 1.5rem 2rem; box-shadow: 0 2px 8px var(--shadow);
+    animation: fade-up .5s both;
+  }
   .paid { color: var(--paid); font-weight: bold; }
-  .ok { color: var(--accent2); }
+  .ok {
+    color: var(--accent2); border-left: 3px solid var(--accent2);
+    padding-left: .7rem; animation: fade-up .4s both;
+  }
+  .badge {
+    display: inline-block; min-width: 1.3em; text-align: center;
+    padding: 0 .35em; border-radius: 999px; font-size: .82em;
+    background: var(--accent); color: var(--bg); font-family: ui-monospace, monospace;
+  }
+  .badge.hot { animation: throb 1.1s ease-in-out infinite; }
   footer { color: var(--dim); text-align: center; padding: 2rem; font-size: .85rem; }
-  h2 { border-bottom: 1px solid var(--line); padding-bottom: .2rem; margin-top: 2.2rem; }
+  h2 {
+    border-bottom: 1px solid var(--line); padding-bottom: .2rem; margin-top: 2.2rem;
+    position: relative;
+  }
+  h2::before {
+    content: "◆"; color: var(--accent); font-size: .6em; vertical-align: middle;
+    margin-right: .5rem; opacity: .55;
+  }
+  a { color: var(--accent); }
+
+  @media (prefers-reduced-motion: reduce) {
+    * { animation: none !important; transition: none !important; scroll-behavior: auto; }
+    .status.waking .dot { box-shadow: 0 0 0 3px var(--glow); }
+  }
 </style>
 </head>
 <body>
+<div class="bunting"></div>
+<div id="pulse-bar"></div>
 <header>
   <h1><a href="/">{% block brand %}Cairnival{% endblock %}</a></h1>
   <span class="tag">{% block tagline %}{% endblock %}</span>
+  <span id="agent-status" class="status idle" hidden>
+    <span class="dot"></span><span id="agent-status-text">…</span>
+  </span>
   <nav>{% block nav %}{% endblock %}</nav>
 </header>
 <main>{% block content %}{% endblock %}</main>
 <footer>Cairnival — a carnival of small agents. Wake, work, write, sleep.</footer>
+
+<script>
+(function () {
+  var pill = document.getElementById('agent-status');
+  var text = document.getElementById('agent-status-text');
+  if (!pill) return;
+  var alive = true;
+
+  function paint(s) {
+    pill.hidden = false;
+    var waking = !!s.waking_now;
+    document.body.classList.toggle('is-waking', waking);
+    pill.classList.toggle('waking', waking);
+    pill.classList.toggle('idle', !waking);
+    if (waking) {
+      text.innerHTML = 'thinking<span class="ellipsis"></span>';
+    } else {
+      var next = s.next_wake ? (' · next ' + s.next_wake.replace('in ~', '~')) : '';
+      text.textContent = 'idle · ' + (s.wakes || 0) + ' wakes' + next;
+    }
+  }
+
+  async function poll() {
+    if (!alive) return;
+    try {
+      var r = await fetch('/api/status', { cache: 'no-store' });
+      if (!r.ok) throw 0;
+      paint(await r.json());
+    } catch (e) {
+      // no /api/status here (e.g. the hub) — hide and stop quietly
+      pill.hidden = true; alive = false; return;
+    }
+    // poll faster while waking so the indicator feels live
+    var waking = document.body.classList.contains('is-waking');
+    setTimeout(poll, document.hidden ? 8000 : (waking ? 1200 : 3000));
+  }
+  poll();
+  document.addEventListener('visibilitychange', function () {
+    if (!document.hidden && alive) poll();
+  });
+})();
+</script>
+{% block scripts %}{% endblock %}
 </body>
 </html>

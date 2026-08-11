@@ -16,7 +16,9 @@
       Tools: <strong><a href="/tools">{{ tool_count }}</a></strong> ·
       Pursuits: <strong><a href="/pursuits">{{ pursuits | length }}</a></strong>
     </p>
-    <form method="post" action="/wake"><button>Wake now</button></form>
+    <form method="post" action="/wake" onsubmit="document.body.classList.add('is-waking')">
+      <button>✦ Wake now</button>
+    </form>
   </div>
 
   <div class="card">
@@ -33,7 +35,8 @@
     <p>
       Balance: <strong>{{ treasury.balance }}</strong><br>
       Deposits: {{ treasury.deposits }} · Spends: {{ treasury.spends }}<br>
-      Pending proposals: {{ treasury.pending_proposals }}
+      Pending proposals:
+      {% if treasury.pending_proposals %}<span class="badge hot">{{ treasury.pending_proposals }}</span>{% else %}0{% endif %}
     </p>
   </div>
 </div>

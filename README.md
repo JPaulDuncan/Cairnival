@@ -264,6 +264,18 @@ The four knobs that matter most:
 | `WAKE_INTERVAL_MINUTES` | the cadence (± `WAKE_JITTER_MINUTES`) |
 | `UI_TOKEN` | set it anywhere that isn't localhost |
 
+### Reasoning models (Qwen3, DeepSeek-R1, …)
+
+Thinking models emit a long internal monologue before their answer. Left
+unchecked it eats the whole token budget — so the agent looks like it "stops
+before doing anything," and the reasoning ends up in the published record.
+Cairnival handles this for you: it sends Ollama `think: false` (which Qwen3 and
+friends honor) and strips any `<think>…</think>` that leaks through, so only
+the answer — the action taken — is ever acted on or recorded. The default token
+budget is 2048; raise `LLM_MAX_TOKENS` if your model writes long tools. If you
+actually want a model to reason, set `LLM_THINK=true` (the monologue is still
+stripped from the record).
+
 ## Running without Docker (cron / native services)
 
 Docker is optional. The agent is one process (`cairnival agent`) or one shot

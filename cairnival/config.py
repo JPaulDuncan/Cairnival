@@ -54,7 +54,11 @@ class AgentConfig:
     llamacpp_bin: str = "llama-cli"
     llamacpp_model_path: str = ""
     llm_timeout_seconds: int = 300
-    llm_max_tokens: int = 1024
+    llm_max_tokens: int = 2048
+    # Reasoning models (Qwen3, DeepSeek-R1, …) think before answering. Off by
+    # default: the monologue wastes tokens and must never reach the record.
+    # Leaked <think> blocks are stripped regardless of this setting.
+    llm_think: bool = False
 
     # The Midway (central hub)
     hub_url: str = ""
@@ -142,6 +146,7 @@ class AgentConfig:
         cfg.llamacpp_model_path = _env("LLAMACPP_MODEL_PATH", cfg.llamacpp_model_path)
         cfg.llm_timeout_seconds = _env_int("LLM_TIMEOUT_SECONDS", cfg.llm_timeout_seconds)
         cfg.llm_max_tokens = _env_int("LLM_MAX_TOKENS", cfg.llm_max_tokens)
+        cfg.llm_think = _env_bool("LLM_THINK", cfg.llm_think)
         cfg.hub_url = _env("HUB_URL", cfg.hub_url).rstrip("/")
         cfg.ui_host = _env("UI_HOST", cfg.ui_host)
         cfg.ui_port = _env_int("UI_PORT", cfg.ui_port)

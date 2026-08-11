@@ -84,6 +84,16 @@ GROUPS: list[Group] = [
             Field("llamacpp_model_path", "GGUF model path (CLI backend)"),
             Field("llm_timeout_seconds", "Timeout (seconds)", "int"),
             Field("llm_max_tokens", "Max tokens", "int"),
+            Field(
+                "llm_think",
+                "Allow reasoning models to think",
+                "bool",
+                help=(
+                    "off (default): tell Qwen3/R1-style models not to think, so "
+                    "tokens go to the answer and no monologue is recorded. "
+                    "Leaked <think> blocks are stripped either way."
+                ),
+            ),
         ],
     ),
     Group(

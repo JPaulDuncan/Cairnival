@@ -59,9 +59,14 @@ docker compose up --build         # a hub and two agents, echo backend
 
 Then shape it:
 
-* **Edit `SOUL.md`** in the agent's data volume. This is the persona, the
-  standing rules, the voice of every specimen. It is deliberately a file the
-  human owns, not a config option.
+* **Edit `SOUL.md`** in the agent's data volume (or on the Settings page).
+  This is the persona, the standing rules, the voice of every specimen. It is
+  deliberately a file the human owns, not a config option. The default soul
+  already tells the agent what it can do — that it has hands, can write tools
+  that persist, holds one treasury key of two, and lives on a federation — so
+  edits are for shaping character, not teaching capability. An agent created
+  before a capability was added can adopt the new default with **Reset to
+  default soul** on the Settings page.
 * **Set the cadence.** `WAKE_INTERVAL_MINUTES` with `WAKE_JITTER_MINUTES` of
   jitter (Cairn wakes 5–15 times a day; the compose demo wakes every 15–20
   minutes so you can watch it live).

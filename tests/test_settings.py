@@ -106,6 +106,19 @@ def test_soul_editable_via_ui(tmp_path):
     assert (cfg.home / "SOUL.md").read_text() == "# SOUL\n\nBe brief."
 
 
+def test_soul_reset_restores_default_with_capabilities(tmp_path):
+    cfg = base_cfg(tmp_path)
+    app = create_app(cfg)
+    with TestClient(app) as client:
+        client.post("/settings/soul", data={"soul": "# SOUL\n\nold and terse."})
+        assert "old and terse." in (cfg.home / "SOUL.md").read_text()
+        resp = client.post("/settings/soul-reset", follow_redirects=False)
+        assert resp.status_code == 303
+    refreshed = " ".join((cfg.home / "SOUL.md").read_text().lower().split())
+    assert "write your own tools" in refreshed
+    assert "one key of" in refreshed
+
+
 def test_settings_gated_by_ui_token(tmp_path):
     cfg = base_cfg(tmp_path)
     cfg.ui_token = "s3cret"

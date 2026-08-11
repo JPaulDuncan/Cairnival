@@ -224,6 +224,19 @@ def create_app(cfg: AgentConfig | None = None) -> FastAPI:
         open_memory(c).soul_path.write_text(soul.replace("\r\n", "\n"), encoding="utf-8")
         return _redirect(request, "/settings?saved=soul")
 
+    @app.post("/settings/soul-reset")
+    def soul_reset(request: Request):
+        """Overwrite this agent's soul with the current default — how an agent
+        created before a capability change picks up the new persona."""
+        check_token(request)
+        c = current()
+        from .memory import DEFAULT_SOUL
+
+        open_memory(c).soul_path.write_text(
+            DEFAULT_SOUL.format(name=c.name), encoding="utf-8"
+        )
+        return _redirect(request, "/settings?saved=soul")
+
     # -- human controls ----------------------------------------------------
     @app.post("/instruct")
     def instruct(

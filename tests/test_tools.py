@@ -1,5 +1,20 @@
 from cairnival.config import AgentConfig
+from cairnival.memory import DEFAULT_SOUL
 from cairnival.tools import ToolRegistry, safe_name
+
+
+def test_default_soul_advertises_new_capabilities():
+    soul = DEFAULT_SOUL.format(name="rustle")
+    low = " ".join(soul.lower().split())  # collapse wrapping whitespace
+    # hands: shell + installing software
+    assert "shell command" in low
+    assert "install software" in low
+    # writing tools that persist across wakes
+    assert "write your own tools" in low
+    assert "every future wake" in low
+    # treasury co-sign and federation are named
+    assert "one key of" in low
+    assert "federation" in low
 
 
 def registry(tmp_path) -> ToolRegistry:

@@ -51,5 +51,10 @@
   <textarea name="soul" rows="16">{{ soul }}</textarea>
   <p><button>Save soul</button></p>
 </form>
+<form method="post" action="/settings/soul-reset"
+      onsubmit="return confirm('Overwrite this soul with the current default persona (which describes tools, treasury, and federation)?')">
+  <button class="quiet">Reset to default soul</button>
+  <span class="label">picks up capabilities added since this agent was created</span>
+</form>
 
 {% endblock %}

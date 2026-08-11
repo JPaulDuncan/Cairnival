@@ -139,3 +139,31 @@ def test_self_direction_switch_off(tmp_path):
     cfg.self_direction_enabled = False
     report = run_wake(cfg)
     assert report.self_directed is False
+
+
+def test_specimen_generated_without_thinking(tmp_path, monkeypatch):
+    """The published specimen must be produced with reasoning off, so a
+    thinking model's monologue can never land in the record."""
+    from cairnival import wake as wake_mod
+
+    seen_think = []
+
+    class RecordingLLM:
+        def describe(self):
+            return "recording"
+
+        def chat(self, system, prompt, think=None):
+            # remember the think flag for the specimen-writing call
+            if "blog entry" in prompt or "blog entry about this wake" in prompt:
+                seen_think.append(think)
+            return "# Wake\n\nA clean entry."
+
+    monkeypatch.setattr(wake_mod, "build_backend", lambda cfg: RecordingLLM())
+
+    cfg = AgentConfig()
+    cfg.name = "rustle"
+    cfg.home = tmp_path / "nt"
+    cfg.self_direction_enabled = False  # keep the wake to just the specimen
+    report = run_wake(cfg)
+    assert report.specimen is not None
+    assert seen_think and all(t is False for t in seen_think)

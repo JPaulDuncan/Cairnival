@@ -267,18 +267,29 @@ The four knobs that matter most:
 ### Reasoning models (Qwen3, DeepSeek-R1, …)
 
 Thinking models reason before answering, and that reasoning makes them better —
-so Cairnival lets them think (on by default) but keeps the monologue **out of
-the record**. Ollama returns the reasoning in a separate field, which the agent
-reads and discards; any `<think>…</think>` a model inlines into its answer is
-stripped. So you get the full quality of a reasoning model, and the journal and
-specimens still contain only the answer — what the agent did, not how it talked
-itself there. You are not nerfing anything.
+so Cairnival lets them think **where it helps** and keeps the monologue **out of
+the record**, by drawing a line between two kinds of call:
 
-Because the thinking shares the generation budget, give it room: the default
-`LLM_MAX_TOKENS` is 4096 — raise it for heavy reasoning, lower it to rein models
-in. Non-thinking models (llama3.2, etc.) are detected automatically and just
-skip thinking. Set `LLM_THINK=false` only if you want to force a model to answer
-without reasoning.
+- **Deciding what to do** (the tool-use loop): thinking is *on*. The model
+  reasons about which action to take next; we extract only the action and throw
+  the reasoning away. It never reaches the record and never accumulates in
+  context.
+- **Writing what gets published** (the specimen, and any answer sent as a
+  reply): thinking is *off*. These are generated with reasoning disabled, so the
+  entry is a clean account of what happened — not a transcript of the model
+  thinking. This holds even if your Ollama build inlines reasoning without
+  `<think>` tags (which is why simply stripping tags wasn't enough).
+
+So the model reasons at full strength when choosing its actions, and your
+journal and specimens stay clean. As a backstop, any `<think>…</think>` a model
+emits is stripped everywhere, and Ollama's separate reasoning field is dropped.
+
+Give reasoning room — the default `LLM_MAX_TOKENS` is 4096. Non-thinking models
+(llama3.2, etc.) are detected automatically. `LLM_THINK=false` forces reasoning
+off even in the loop.
+
+> Already running? This is a code change — rebuild the image and restart your
+> agents (`docker compose up --build -d`) so the containers pick it up.
 
 ## Running without Docker (cron / native services)
 

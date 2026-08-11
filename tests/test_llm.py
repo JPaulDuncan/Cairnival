@@ -58,6 +58,22 @@ def test_ollama_thinks_by_default_and_keeps_only_the_answer(monkeypatch):
     assert captured["json"]["think"] is True  # thinking is ON by default
 
 
+def test_ollama_per_call_think_override(monkeypatch):
+    seen = []
+
+    def fake_post(url, json=None, timeout=None):
+        seen.append(json["think"])
+        return FakeResponse({"message": {"content": "answer"}})
+
+    monkeypatch.setattr(httpx, "post", fake_post)
+    backend = OllamaBackend("http://x:11434", "qwen3", think=True)
+    backend.chat("s", "p")               # default → think on
+    backend.chat("s", "p", think=False)  # published text → forced off
+    backend.chat("s", "p", think=True)   # forced on
+    assert seen == [True, False, True]
+    assert backend.think is True  # override doesn't change the default
+
+
 def test_ollama_downgrades_once_for_nonthinking_models(monkeypatch):
     calls = {"n": 0}
 

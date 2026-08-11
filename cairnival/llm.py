@@ -24,6 +24,13 @@ So the model is not nerfed — it reasons fully — and every backend still retu
 only the answer: what the agent actually said or did, not how it got there.
 Give reasoning models room (``LLM_MAX_TOKENS``, default 4096) since the thinking
 shares the budget.
+
+``chat`` takes a per-call ``think`` override. The wake cycle uses it to draw a
+hard line: text that gets **published** (a specimen, a recorded answer) is
+generated with ``think=False``, so no monologue can reach the record even if a
+particular Ollama build inlines reasoning without tags; the internal tool-use
+loop leaves thinking on, because there the reasoning only helps the model pick
+its next action and is discarded once the action is extracted.
 """
 
 from __future__ import annotations
@@ -64,7 +71,13 @@ def strip_thinking(text: str) -> str:
 class LLMBackend:
     name = "base"
 
-    def chat(self, system: str, prompt: str) -> str:  # pragma: no cover - interface
+    def chat(
+        self, system: str, prompt: str, think: bool | None = None
+    ) -> str:  # pragma: no cover - interface
+        """``think`` overrides the backend default for this one call:
+        True/False to force reasoning on/off, None to use the backend default.
+        Backends that can't control reasoning ignore it (they still strip any
+        leaked <think>)."""
         raise NotImplementedError
 
     def describe(self) -> str:
@@ -79,7 +92,7 @@ class EchoBackend(LLMBackend):
 
     name = "echo"
 
-    def chat(self, system: str, prompt: str) -> str:
+    def chat(self, system: str, prompt: str, think: bool | None = None) -> str:
         return (
             "(echo backend — no local model configured)\n\n"
             f"I was asked:\n{prompt.strip()[:2000]}"
@@ -116,15 +129,17 @@ class OllamaBackend(LLMBackend):
         resp.raise_for_status()
         return resp.json()
 
-    def chat(self, system: str, prompt: str) -> str:
+    def chat(self, system: str, prompt: str, think: bool | None = None) -> str:
+        # Per-call override wins; otherwise the backend default. Text that gets
+        # published (a specimen, a recorded answer) is generated with think
+        # off, so reasoning never lands in the record even if this Ollama
+        # inlines it. The tool loop leaves it on: reasoning helps pick the
+        # action, and only the action is kept.
+        want_think = self.think if think is None else think
         payload = {
             "model": self.model,
             "stream": False,
-            # Let the model reason: the ANSWER is conditioned on its
-            # chain-of-thought. Ollama returns the reasoning in a separate
-            # `thinking` field, which we deliberately drop — reasoning is used,
-            # never recorded.
-            "think": self.think,
+            "think": want_think,
             "options": {"num_predict": self.max_tokens},
             "messages": [
                 {"role": "system", "content": system},
@@ -173,7 +188,7 @@ class LlamaCppServerBackend(LLMBackend):
     def describe(self) -> str:
         return f"llama.cpp server @ {self.base_url}"
 
-    def chat(self, system: str, prompt: str) -> str:
+    def chat(self, system: str, prompt: str, think: bool | None = None) -> str:
         payload = {
             "max_tokens": self.max_tokens,
             "messages": [
@@ -213,7 +228,7 @@ class LlamaCppCliBackend(LLMBackend):
     def describe(self) -> str:
         return f"llama-cli {self.model_path}"
 
-    def chat(self, system: str, prompt: str) -> str:
+    def chat(self, system: str, prompt: str, think: bool | None = None) -> str:
         full_prompt = f"{system.strip()}\n\n{prompt.strip()}\n"
         cmd = [
             self.binary,

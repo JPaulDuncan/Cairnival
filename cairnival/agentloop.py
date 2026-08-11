@@ -435,13 +435,15 @@ def solve(ctx, instruction, registry: ToolRegistry) -> LoopResult:
             f"[result]\n{observation}\n"
         )
 
-    # ran out of steps — ask for a wrap-up using what we gathered
+    # ran out of steps — ask for a wrap-up using what we gathered. This answer
+    # is recorded/replied, so generate it with thinking off.
     try:
         result.answer = ctx.llm.chat(
             system,
             f"{task}\n\nWork so far:\n{transcript}\n\n"
             "You are out of action steps. Write your ```final``` answer now "
             "from what you have.",
+            think=False,
         )
         result.answer = parse_action(result.answer).body
     except Exception as exc:

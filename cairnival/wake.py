@@ -141,7 +141,8 @@ def _work_instruction(ctx: WakeContext, ins: Instruction) -> dict[str, Any]:
         "plainly what remains."
     )
     try:
-        answer = ctx.llm.chat(soul, prompt)
+        # This answer is recorded, so generate it without visible reasoning.
+        answer = ctx.llm.chat(soul, prompt, think=False)
         ctx.note(f"worked: {ins.title} [{ins.source}]")
     except LLMError as exc:
         answer = f"(the instrument failed on this one: {exc})"
@@ -189,7 +190,9 @@ def _write_specimen(
             "first person, under 200 words. Start with a single '# ' title line."
         )
     try:
-        body = ctx.llm.chat(soul, prompt)
+        # The specimen is published verbatim — never with the model's
+        # reasoning in it. Generate it with thinking off.
+        body = ctx.llm.chat(soul, prompt, think=False)
     except LLMError as exc:
         body = (
             f"# Wake {wake_number}: the instrument was down\n\n"

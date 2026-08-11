@@ -23,8 +23,9 @@ class ScriptedLLM:
     def describe(self):
         return "scripted"
 
-    def chat(self, system, prompt):
+    def chat(self, system, prompt, think=None):
         self.calls += 1
+        self.last_think = think
         if self.replies:
             return self.replies.pop(0)
         return "```final\nout of script\n```"

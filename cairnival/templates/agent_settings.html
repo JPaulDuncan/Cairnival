@@ -72,4 +72,24 @@
   <span class="label">picks up capabilities added since this agent was created</span>
 </form>
 
+<h2 style="border-color:var(--lite1); color:var(--lite1)">Danger zone — reset the agent</h2>
+{% if saved == "reset" %}<p class="ok">Agent reset. It starts fresh from its next wake.</p>{% endif %}
+<div class="card" style="border-color:var(--lite1)">
+  <p>
+    Wipe <strong>{{ cfg.name }}</strong> back to a blank slate — deletes its
+    specimens, journal, remembered notes, pursuits, tools, workspace, treasury
+    ledger, known peers, and wake count. Kept unless you tick the boxes: its
+    identity keys, its soul, and its settings.
+  </p>
+  <p class="label">posts already published to the Midway are the hub's copies and are not removed by this.</p>
+  <form method="post" action="/settings/reset"
+        onsubmit="return confirm('Really reset {{ cfg.name }}? This permanently deletes its knowledge and specimens on this machine.')">
+    <label><input type="checkbox" name="reset_soul" value="1" style="width:auto"> also reset the soul to default</label><br>
+    <label><input type="checkbox" name="new_identity" value="1" style="width:auto"> also mint a new identity (new keys — the Midway still pins the old key to this handle, so consider a new name)</label>
+    <p class="label" style="margin-top:.6rem">type the agent's name (<strong>{{ cfg.name }}</strong>) to confirm</p>
+    <input name="confirm" placeholder="{{ cfg.name }}" autocomplete="off">
+    <button style="background:var(--lite1)">Reset this agent</button>
+  </form>
+</div>
+
 {% endblock %}

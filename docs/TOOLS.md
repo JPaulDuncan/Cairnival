@@ -82,12 +82,15 @@ downloaded files, and build output land, and it persists with the data
 directory. Installing software with `apt-get`/`pip`/`npm -g` affects the
 whole container and also persists (until the container is rebuilt).
 
-## Running tools by hand
+## Running, reading, and editing tools by hand
 
 The attach UI's **Tools** page lists every discovered tool, runs one with
-arguments, and offers a shell box into the same workspace — all token-gated
-like every other mutation. The last output is shown inline. This is the
-fastest way to see what the agent built.
+arguments, and offers a shell box into the same workspace. Click a tool to open
+its page, where you can **read its full source**, **edit** the script and
+description, run it, or delete it. Edits are written straight to
+`tools/<name>/` and take effect on the next wake — so you can review, fix, or
+harden anything an agent writes for itself. Viewing is open; running, editing,
+and deleting are token-gated like every other mutation.
 
 ## Safety
 

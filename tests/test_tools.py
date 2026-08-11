@@ -89,6 +89,60 @@ def test_output_is_truncated(tmp_path):
     assert "truncated" in rendered
 
 
+def test_source_update_and_delete(tmp_path):
+    reg = registry(tmp_path)
+    reg.write_tool("greet", "hi", "bash", '#!/usr/bin/env bash\necho hello')
+    assert "echo hello" in reg.source("greet")
+
+    reg.update_source("greet", "#!/usr/bin/env bash\necho HI", description="louder")
+    # a fresh registry (next wake) sees the edit
+    reg2 = registry(tmp_path)
+    reg2.discover()
+    assert "echo HI" in reg2.source("greet")
+    assert reg2.tools["greet"].description == "louder"
+    assert reg2.run_tool("greet", []).output.strip() == "HI"
+
+    assert reg2.delete("greet") is True
+    assert "greet" not in registry(tmp_path).discover()
+
+
+def test_reset_wipes_knowledge_keeps_identity(tmp_path):
+    from cairnival.federation import Identity
+    from cairnival.memory import Memory
+    from cairnival.specimens import Specimen, save as save_specimen
+
+    memory = Memory(tmp_path, "rustle")
+    memory.ensure()
+    Identity.load_or_create(memory.keys_dir, "rustle")
+    key_before = (memory.keys_dir / "ed25519.key").read_text()
+    save_specimen(Specimen(id="SP-0001", agent="rustle", title="t", body="b"), memory.specimens_dir)
+    memory.journal_append("a wake happened")
+    memory.remember_append("a memory")
+    memory.save_state({"wakes": 12})
+
+    memory.reset()
+
+    assert not list(memory.specimens_dir.glob("SP-*.md"))
+    assert memory.load_state().get("wakes", 0) == 0
+    assert not memory.remember_path.exists()
+    # identity and soul are kept by default
+    assert (memory.keys_dir / "ed25519.key").read_text() == key_before
+    assert memory.soul_path.exists()
+
+
+def test_reset_can_mint_new_identity(tmp_path):
+    from cairnival.federation import Identity
+    from cairnival.memory import Memory
+
+    memory = Memory(tmp_path, "rustle")
+    memory.ensure()
+    Identity.load_or_create(memory.keys_dir, "rustle")
+    key_before = (memory.keys_dir / "ed25519.key").read_text()
+    memory.reset(new_identity=True)
+    Identity.load_or_create(memory.keys_dir, "rustle")  # lazily recreated
+    assert (memory.keys_dir / "ed25519.key").read_text() != key_before
+
+
 def test_safe_name():
     assert safe_name("My Cool Tool!") == "my-cool-tool"
     assert safe_name("   ") == "tool"

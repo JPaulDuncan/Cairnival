@@ -184,6 +184,47 @@ class Memory:
                 f"# Raw journal — {self.agent_name}\n", encoding="utf-8"
             )
 
+    # -- reset -------------------------------------------------------------
+    def reset(self, *, new_identity: bool = False, reset_soul: bool = False) -> None:
+        """Wipe the agent's knowledge: specimens, journal, memory, pursuits,
+        tools, workspace, treasury, peers, and wake state — back to a blank
+        slate.
+
+        Kept by default so the same agent continues: its identity (keys), its
+        soul (persona), and its settings (config.json). Set ``new_identity`` to
+        mint a fresh keypair, or ``reset_soul`` to restore the default persona.
+
+        Note: specimens already published to the Midway are the hub's copies
+        and are not touched here — this resets the agent, not the feed.
+        """
+        import shutil
+
+        for d in (
+            self.inbox_dir,
+            self.archive_dir,
+            self.specimens_dir,
+            self.outbox_dir,
+            self.tools_dir,
+            self.workspace_dir,
+            self.treasury_dir,
+        ):
+            if d.exists():
+                shutil.rmtree(d, ignore_errors=True)
+        for f in (
+            self.state_path,
+            self.journal_path,
+            self.remember_path,
+            self.peers_path,
+            self.home / "pursuits.json",
+        ):
+            if f.exists():
+                f.unlink()
+        if new_identity and self.keys_dir.exists():
+            shutil.rmtree(self.keys_dir, ignore_errors=True)
+        if reset_soul and self.soul_path.exists():
+            self.soul_path.unlink()
+        self.ensure()  # recreate the empty world (+ fresh soul/state if removed)
+
     # -- state -------------------------------------------------------------
     def load_state(self) -> dict[str, Any]:
         if not self.state_path.exists():

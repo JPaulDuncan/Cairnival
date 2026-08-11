@@ -1,0 +1,39 @@
+{% extends "base.html" %}
+{% block title %}{{ tool.name }} — {{ cfg.name }}{% endblock %}
+{% block brand %}{{ cfg.name }}{% endblock %}
+{% block tagline %}tool: {{ tool.name }}{% endblock %}
+{% block nav %}<a href="/tools">tools</a><a href="/">dashboard</a>{% endblock %}
+{% block content %}
+
+{% if saved %}<p class="ok">Saved. The updated tool is live now and on every future wake.</p>{% endif %}
+
+<div class="specimen-label">
+  {{ tool.name }} · {{ tool.interpreter }} · entry {{ tool.entry }} ·
+  by {{ tool.author }}{% if tool.created %} · created {{ tool.created }}{% endif %}
+</div>
+
+<h2>Source</h2>
+<form method="post" action="/tools/{{ tool.name }}/save">
+  <label class="label">description</label>
+  <input name="description" value="{{ tool.description }}">
+  <label class="label">script ({{ tool.entry }})</label>
+  <textarea name="source" rows="22" spellcheck="false"
+            style="font-family:ui-monospace,monospace; font-size:.9em; white-space:pre;">{{ source }}</textarea>
+  <button>Save source</button>
+</form>
+
+<h2>Run it</h2>
+<form method="post" action="/tools/run">
+  <input type="hidden" name="name" value="{{ tool.name }}">
+  <input name="args" placeholder="arguments (optional)">
+  <button class="quiet">Run</button>
+</form>
+{% if output %}<pre>{{ output }}</pre>{% endif %}
+
+<h2>Danger</h2>
+<form method="post" action="/tools/{{ tool.name }}/delete"
+      onsubmit="return confirm('Delete the tool {{ tool.name }}? This removes its files.')">
+  <button class="quiet">Delete this tool</button>
+</form>
+
+{% endblock %}

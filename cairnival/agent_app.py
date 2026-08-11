@@ -31,7 +31,7 @@ from .memory import Memory, utcnow
 from .pursuits import PursuitBook
 from .settings import GROUPS, SECRET_CLEAR_SENTINEL, apply_form, load_agent_config
 from .specimens import load_all
-from .tools import ToolRegistry, parse_args
+from .tools import ToolError, ToolRegistry, parse_args
 from .treasury import Ledger
 from .wake import next_wake_delay_seconds, run_wake
 
@@ -256,6 +256,55 @@ def create_app(cfg: AgentConfig | None = None) -> FastAPI:
         _last_tool_output["text"] = result.render(c.tools_output_limit)
         return _redirect(request, f"/tools?ran={name}")
 
+    @app.get("/tools/{name}", response_class=HTMLResponse)
+    def tool_detail(request: Request, name: str):
+        c = current()
+        memory = open_memory(c)
+        registry = ToolRegistry(memory.tools_dir, memory.workspace_dir, c)
+        registry.discover()
+        tool = registry.tools.get(name)
+        if tool is None:
+            raise HTTPException(404, "no such tool")
+        return templates.TemplateResponse(
+            request,
+            "agent_tool_detail.html",
+            {
+                "cfg": c,
+                "tool": tool,
+                "source": registry.source(name) or "",
+                "saved": request.query_params.get("saved", ""),
+                "output": _last_tool_output.get("text", "") if request.query_params.get("ran") else "",
+            },
+        )
+
+    @app.post("/tools/{name}/save")
+    def tool_save(
+        request: Request,
+        name: str,
+        source: str = Form(...),
+        description: str = Form(""),
+    ):
+        check_token(request)
+        c = current()
+        memory = open_memory(c)
+        registry = ToolRegistry(memory.tools_dir, memory.workspace_dir, c)
+        registry.discover()
+        try:
+            registry.update_source(name, source.replace("\r\n", "\n"), description)
+        except ToolError as exc:
+            raise HTTPException(400, str(exc))
+        return _redirect(request, f"/tools/{name}?saved=1")
+
+    @app.post("/tools/{name}/delete")
+    def tool_delete(request: Request, name: str):
+        check_token(request)
+        c = current()
+        memory = open_memory(c)
+        registry = ToolRegistry(memory.tools_dir, memory.workspace_dir, c)
+        registry.discover()
+        registry.delete(name)
+        return _redirect(request, "/tools")
+
     @app.post("/tools/shell")
     def tools_shell(request: Request, command: str = Form(...)):
         check_token(request)
@@ -306,6 +355,22 @@ def create_app(cfg: AgentConfig | None = None) -> FastAPI:
         check_token(request)
         open_memory(current()).remember_clear()
         return _redirect(request, "/settings?saved=forgot")
+
+    @app.post("/settings/reset")
+    async def reset_agent(request: Request):
+        """Wipe the agent's knowledge and specimens back to a blank slate.
+        Requires typing the agent's name to confirm."""
+        check_token(request)
+        c = current()
+        form = await request.form()
+        if str(form.get("confirm", "")).strip() != c.name:
+            raise HTTPException(400, "confirmation did not match the agent's name")
+        memory = open_memory(c)
+        memory.reset(
+            new_identity=str(form.get("new_identity", "")) != "",
+            reset_soul=str(form.get("reset_soul", "")) != "",
+        )
+        return _redirect(request, "/settings?saved=reset")
 
     @app.post("/settings/soul-reset")
     def soul_reset(request: Request):

@@ -87,6 +87,70 @@ def test_tools_shell_gated_by_token(tmp_path):
         assert denied.status_code == 403
 
 
+def test_tool_view_edit_delete_via_ui(tmp_path):
+    from cairnival.tools import ToolRegistry
+
+    cfg, app = make_app(tmp_path)
+    memory = Memory(cfg.home, cfg.name)
+    memory.ensure()
+    reg = ToolRegistry(memory.tools_dir, memory.workspace_dir, cfg)
+    reg.write_tool("greet", "hi", "bash", '#!/usr/bin/env bash\necho hello')
+    with TestClient(app) as client:
+        page = client.get("/tools/greet")
+        assert page.status_code == 200
+        assert "echo hello" in page.text  # source is viewable
+
+        saved = client.post(
+            "/tools/greet/save",
+            data={"source": "#!/usr/bin/env bash\necho HI", "description": "louder"},
+            follow_redirects=False,
+        )
+        assert saved.status_code == 303
+        reg2 = ToolRegistry(memory.tools_dir, memory.workspace_dir, cfg)
+        reg2.discover()
+        assert "echo HI" in reg2.source("greet")  # edit persisted to disk
+
+        deleted = client.post("/tools/greet/delete", follow_redirects=False)
+        assert deleted.status_code == 303
+    assert "greet" not in ToolRegistry(memory.tools_dir, memory.workspace_dir, cfg).discover()
+
+
+def test_tool_edit_gated_by_token(tmp_path):
+    from cairnival.tools import ToolRegistry
+
+    cfg, app = make_app(tmp_path, ui_token="s3cret")
+    memory = Memory(cfg.home, cfg.name)
+    memory.ensure()
+    ToolRegistry(memory.tools_dir, memory.workspace_dir, cfg).write_tool(
+        "greet", "hi", "bash", "echo hi"
+    )
+    with TestClient(app) as client:
+        assert client.get("/tools/greet").status_code == 200  # viewing is open
+        denied = client.post(
+            "/tools/greet/save", data={"source": "echo x"}, follow_redirects=False
+        )
+        assert denied.status_code == 403  # editing needs the token
+
+
+def test_reset_requires_confirmation_and_wipes(tmp_path):
+    from cairnival.specimens import Specimen, save as save_specimen
+
+    cfg, app = make_app(tmp_path)
+    memory = Memory(cfg.home, cfg.name)
+    memory.ensure()
+    save_specimen(Specimen(id="SP-0001", agent="rustle", title="t", body="b"), memory.specimens_dir)
+    memory.save_state({"wakes": 9})
+    with TestClient(app) as client:
+        bad = client.post("/settings/reset", data={"confirm": "wrong"}, follow_redirects=False)
+        assert bad.status_code == 400  # must type the agent's name
+        assert list(memory.specimens_dir.glob("SP-*.md"))  # untouched
+
+        ok = client.post("/settings/reset", data={"confirm": "rustle"}, follow_redirects=False)
+        assert ok.status_code == 303
+    assert not list(memory.specimens_dir.glob("SP-*.md"))
+    assert memory.load_state().get("wakes", 0) == 0
+
+
 def test_webhook_connector(tmp_path):
     cfg, app = make_app(tmp_path, webhook_token="hook")
     with TestClient(app) as client:

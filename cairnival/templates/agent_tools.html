@@ -17,7 +17,7 @@
 <div class="cards">
   {% for t in tools %}
   <div class="card">
-    <h3>{{ t.name }}</h3>
+    <h3><a href="/tools/{{ t.name }}">{{ t.name }}</a></h3>
     <p>{{ t.description }}</p>
     <div class="specimen-label">
       {{ t.interpreter }} · entry {{ t.entry }}<br>
@@ -26,7 +26,7 @@
     <form method="post" action="/tools/run" style="margin-top:.6rem">
       <input type="hidden" name="name" value="{{ t.name }}">
       <input name="args" placeholder="arguments (optional)">
-      <button>Run</button>
+      <button>Run</button> <a href="/tools/{{ t.name }}" class="label" style="margin-left:.4rem">view / edit source →</a>
     </form>
   </div>
   {% endfor %}

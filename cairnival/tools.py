@@ -176,6 +176,39 @@ class ToolRegistry:
         self.tools[name] = tool  # available immediately, not only next wake
         return tool
 
+    # -- inspection & editing (for humans via the UI) ----------------------
+    def source(self, name: str) -> str | None:
+        tool = self.tools.get(name)
+        if tool is None or tool.dir is None:
+            return None
+        path = tool.dir / tool.entry
+        return path.read_text(encoding="utf-8") if path.exists() else ""
+
+    def update_source(
+        self, name: str, body: str, description: str | None = None
+    ) -> Tool:
+        tool = self.tools.get(name)
+        if tool is None or tool.dir is None:
+            raise ToolError(f"no such tool: {name}")
+        script = tool.dir / tool.entry
+        script.write_text(body if body.endswith("\n") else body + "\n", encoding="utf-8")
+        script.chmod(0o755)
+        if description is not None and description.strip():
+            tool.description = description.strip()
+        (tool.dir / "tool.json").write_text(
+            json.dumps(tool.to_manifest(), indent=2), encoding="utf-8"
+        )
+        return tool
+
+    def delete(self, name: str) -> bool:
+        tool = self.tools.get(name)
+        if tool is None or tool.dir is None:
+            return False
+        if tool.dir.exists():
+            shutil.rmtree(tool.dir, ignore_errors=True)
+        self.tools.pop(name, None)
+        return True
+
     # -- execution ---------------------------------------------------------
     def _guard(self, command: str) -> None:
         low = command.lower()

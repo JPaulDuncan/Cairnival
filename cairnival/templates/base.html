@@ -189,6 +189,69 @@
   }
   a { color: var(--accent); }
 
+  /* ---------- social feed ---------- */
+  .social-layout { display: grid; grid-template-columns: 1fr 18rem; gap: 1.5rem; align-items: start; }
+  @media (max-width: 780px) { .social-layout { grid-template-columns: 1fr; } .sidebar { order: -1; } }
+  .avatar { display: block; border-radius: 22%; }
+  .post {
+    display: flex; gap: .85rem; padding: 1rem 1.1rem; margin: 0 0 .8rem;
+    background: var(--card); border: 1px solid var(--line); border-radius: 10px;
+    box-shadow: 0 1px 2px var(--shadow);
+    transition: transform .16s ease, box-shadow .16s ease, border-color .16s ease;
+    animation: fade-up .45s both;
+  }
+  .post:hover { border-color: var(--accent); box-shadow: 0 6px 20px var(--shadow); }
+  .post.lead { box-shadow: 0 3px 14px var(--shadow); }
+  .post-av { flex: none; }
+  .post-body { min-width: 0; flex: 1; }
+  .post-head { display: flex; align-items: baseline; gap: .5rem; flex-wrap: wrap; }
+  .post-handle { font-weight: bold; color: var(--ink); text-decoration: none; }
+  .post-handle:hover { color: var(--accent); }
+  .post-meta { color: var(--dim); font: 12px/1.4 ui-monospace, monospace; }
+  .post-meta a { color: var(--dim); }
+  .post-reply-to { font: 12px/1.5 ui-monospace, monospace; color: var(--dim); margin-top: .2rem; }
+  .post-title { display: block; font-weight: bold; color: var(--accent); text-decoration: none; margin: .3rem 0 .2rem; font-size: 1.05rem; }
+  .post-title.big { font-size: 1.5rem; margin-top: .4rem; }
+  .post-title:hover { text-decoration: underline; }
+  .post-text { color: var(--ink); }
+  .post-text p:first-child { margin-top: .2rem; }
+  .post-text.clamp {
+    display: -webkit-box; -webkit-line-clamp: 5; -webkit-box-orient: vertical;
+    overflow: hidden; -webkit-mask-image: linear-gradient(180deg, #000 70%, transparent);
+    mask-image: linear-gradient(180deg, #000 70%, transparent);
+  }
+  .post-foot { display: flex; flex-wrap: wrap; gap: .4rem; align-items: center; margin-top: .5rem; }
+  .chip {
+    font: 11px/1.6 ui-monospace, monospace; text-transform: uppercase; letter-spacing: .06em;
+    color: var(--dim); background: var(--bg); border: 1px solid var(--line);
+    border-radius: 999px; padding: 0 .55em;
+  }
+  .mention, .post-mentions a { color: var(--accent2); font-weight: bold; text-decoration: none; }
+  .mention:hover { text-decoration: underline; }
+  .post-mentions { font: 12px/1.6 ui-monospace, monospace; color: var(--dim); }
+  .post-more { margin-left: auto; font: 12px/1.6 ui-monospace, monospace; }
+
+  .sidebar .card { margin-bottom: 1rem; }
+  .bigstat { font-size: 1.05rem; }
+  .who { list-style: none; margin: 0; padding: 0; }
+  .who-row { display: flex; gap: .6rem; align-items: center; padding: .4rem 0; text-decoration: none; color: var(--ink); }
+  .who-row:hover { color: var(--accent); }
+  .who-name { font-size: .9rem; line-height: 1.2; }
+  .who-name em { color: var(--dim); font-size: .82rem; }
+
+  .profile-head { display: flex; gap: 1.1rem; align-items: center; margin: .5rem 0 1rem; }
+  .profile-av .avatar { box-shadow: 0 3px 12px var(--shadow); }
+  .profile-name { margin: 0; font-size: 1.6rem; }
+  .profile-bio { margin: .3rem 0; }
+  .statbar { display: flex; gap: 1.4rem; flex-wrap: wrap; padding: .8rem 1rem; background: var(--card); border: 1px solid var(--line); border-radius: 10px; }
+  .stat { display: flex; flex-direction: column; }
+  .stat b { font-size: 1.3rem; }
+  .stat span { color: var(--dim); font: 11px/1.4 ui-monospace, monospace; text-transform: uppercase; letter-spacing: .06em; }
+  .tabs { display: flex; gap: .3rem; border-bottom: 1px solid var(--line); margin: 1.2rem 0 1rem; }
+  .tab { padding: .5rem .9rem; text-decoration: none; color: var(--dim); border-bottom: 2px solid transparent; }
+  .tab.on { color: var(--accent); border-bottom-color: var(--accent); font-weight: bold; }
+  .thread-line { width: 2px; height: 1.2rem; background: var(--line); margin: -.4rem 0 .4rem 2.2rem; }
+
   @media (prefers-reduced-motion: reduce) {
     * { animation: none !important; transition: none !important; scroll-behavior: auto; }
     .status.waking .dot { box-shadow: 0 0 0 3px var(--glow); }

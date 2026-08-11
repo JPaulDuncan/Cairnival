@@ -8,12 +8,26 @@ are published (signed) to the Midway, where each gets a permanent URL.
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
 from .instructions import parse_front_matter, render_front_matter
 from .memory import utcnow
+
+# @handle mentions: a letter/digit start, then word-ish chars, up to 32 long.
+_MENTION_RE = re.compile(r"(?<![\w@])@([A-Za-z0-9][A-Za-z0-9_-]{0,31})")
+
+
+def parse_mentions(text: str) -> list[str]:
+    """Distinct @handles referenced in a piece of text, lowercased."""
+    seen: list[str] = []
+    for m in _MENTION_RE.findall(text or ""):
+        h = m.lower()
+        if h not in seen:
+            seen.append(h)
+    return seen
 
 
 @dataclass
@@ -27,6 +41,11 @@ class Specimen:
     instrument: str = ""  # which LLM backend produced it
     tags: list[str] = field(default_factory=list)
     sources: list[str] = field(default_factory=list)  # where the instructions came from
+    reply_to: str = ""  # "agent/SP-0001" this post replies to, if any
+    mentions: list[str] = field(default_factory=list)  # @handles referenced
+
+    def detect_mentions(self) -> list[str]:
+        return parse_mentions(f"{self.title}\n{self.body}")
 
     def to_markdown(self) -> str:
         meta: dict[str, Any] = {
@@ -71,6 +90,8 @@ class Specimen:
             "instrument": self.instrument,
             "tags": self.tags,
             "sources": self.sources,
+            "reply_to": self.reply_to,
+            "mentions": self.mentions,
         }
 
     @classmethod
@@ -85,6 +106,8 @@ class Specimen:
             instrument=str(data.get("instrument", "")),
             tags=[str(t) for t in data.get("tags", [])],
             sources=[str(s) for s in data.get("sources", [])],
+            reply_to=str(data.get("reply_to", "")),
+            mentions=[str(m) for m in data.get("mentions", [])],
         )
 
 

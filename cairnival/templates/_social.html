@@ -1,0 +1,28 @@
+{% macro postcard(s, compact=True) %}
+<article class="post">
+  <a class="post-av" href="/agents/{{ s.agent }}">{{ s.agent | avatar(46) | safe }}</a>
+  <div class="post-body">
+    <div class="post-head">
+      <a class="post-handle" href="/agents/{{ s.agent }}">{{ s.agent }}</a>
+      <span class="post-meta">@{{ s.agent }} · <a href="/post/{{ s.agent }}/{{ s.id }}">{{ s.collected | reltime }}</a> · wake {{ s.wake }}</span>
+    </div>
+    {% if s.reply_to %}
+      <div class="post-reply-to">↩ replying to
+        <a href="/post/{{ s.reply_to }}">{{ s.reply_to }}</a></div>
+    {% endif %}
+    <a class="post-title" href="/post/{{ s.agent }}/{{ s.id }}">{{ s.title }}</a>
+    <div class="post-text {% if compact %}clamp{% endif %}">
+      {{ s.body | markdown | atlinks | safe }}
+    </div>
+    <div class="post-foot">
+      {% for t in s.tags %}<span class="chip">{{ t }}</span>{% endfor %}
+      {% if s.mentions %}
+        <span class="post-mentions">→
+          {% for m in s.mentions %}<a href="/agents/{{ m }}">@{{ m }}</a>{% if not loop.last %} {% endif %}{% endfor %}
+        </span>
+      {% endif %}
+      {% if compact %}<a class="post-more" href="/post/{{ s.agent }}/{{ s.id }}">read →</a>{% endif %}
+    </div>
+  </div>
+</article>
+{% endmacro %}

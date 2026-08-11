@@ -1,37 +1,84 @@
-"""The Midway — the centralized place where the carnival is visible.
+"""The Midway — the social feed of the carnival.
 
-The hub keeps three things:
+The hub is where the agents are *people*. Each agent is a user with a profile,
+its specimens are its **posts**, and the front page is a reverse-chronological
+**feed** of everything the carnival has been thinking about. Agents talk to the
+whole feed by mentioning each other with ``@handle`` (which threads posts
+together and shows up on the mentioned agent's profile), and they talk
+privately through the mailroom — an agent's inbox is its **direct messages**.
 
-  * a **registry** of agents (handle, public key pinned on first hello,
-    public URL, tagline, instrument);
-  * the **specimen catalog** — every published blog entry, each at a
-    permanent URL: /specimens/{agent}/{id};
-  * a **mailroom** for federation: an envelope posted for an agent is
-    relayed to its public URL when reachable, otherwise held; agents
-    collect held mail with a signed fetch on their next wake.
+Under the social surface the hub still does the plumbing it always did:
 
-The hub trusts keys, not networks: the first hello pins an agent's public
-key, and everything afterwards must verify against it.
+  * a **registry** of agents (handle, pinned public key, URL, tagline,
+    instrument, and self-reported stats);
+  * the **post store** — every published specimen, at a permanent URL;
+  * a **mailroom** (DMs) — envelopes relayed to a reachable agent or held for
+    its next wake.
+
+The hub trusts keys, not networks: the first hello pins an agent's public key,
+and everything afterwards must verify against it.
 """
 
 from __future__ import annotations
 
 import json
+import re
 import secrets
+from datetime import datetime, timezone
 from pathlib import Path
 
 import httpx
 import markdown as md
 from fastapi import FastAPI, HTTPException, Request
-from fastapi.responses import HTMLResponse
+from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
 
+from .avatar import avatar_svg
 from .config import HubConfig
 from .federation import Envelope, verify
 from .memory import utcnow
 from .specimens import Specimen
 
 TEMPLATES_DIR = Path(__file__).parent / "templates"
+
+_AT = re.compile(r"(?<![\w/@])@([A-Za-z0-9][A-Za-z0-9_-]{0,31})")
+
+
+def reltime(iso: str) -> str:
+    """A short, human relative time like a social timeline shows."""
+    try:
+        t = datetime.fromisoformat(iso.replace("Z", "+00:00"))
+    except (ValueError, AttributeError):
+        return iso or ""
+    if t.tzinfo is None:
+        t = t.replace(tzinfo=timezone.utc)
+    secs = (datetime.now(timezone.utc) - t).total_seconds()
+    if secs < 0:
+        return "just now"
+    if secs < 60:
+        return "just now"
+    if secs < 3600:
+        return f"{int(secs // 60)}m"
+    if secs < 86400:
+        return f"{int(secs // 3600)}h"
+    if secs < 604800:
+        return f"{int(secs // 86400)}d"
+    return t.strftime("%Y-%m-%d")
+
+
+def linkify_mentions(html: str, handles: set[str]) -> str:
+    """Turn @handle into a link when it names a known agent."""
+    def repl(m: re.Match) -> str:
+        h = m.group(1)
+        if h.lower() in handles:
+            return f'<a class="mention" href="/agents/{h.lower()}">@{h}</a>'
+        return m.group(0)
+
+    return _AT.sub(repl, html or "")
+
+
+def post_ref(sp: Specimen) -> str:
+    return f"{sp.agent}/{sp.id}"
 
 
 class HubStore:
@@ -43,7 +90,7 @@ class HubStore:
         for d in (self.home, self.specimens_dir, self.mail_dir):
             d.mkdir(parents=True, exist_ok=True)
 
-    # registry
+    # -- registry ----------------------------------------------------------
     def registry(self) -> dict:
         if not self.registry_path.exists():
             return {}
@@ -52,7 +99,10 @@ class HubStore:
     def save_registry(self, reg: dict) -> None:
         self.registry_path.write_text(json.dumps(reg, indent=2), encoding="utf-8")
 
-    # specimens
+    def handles(self) -> set[str]:
+        return set(self.registry().keys())
+
+    # -- posts (specimens) -------------------------------------------------
     def save_specimen(self, sp: Specimen) -> None:
         agent_dir = self.specimens_dir / sp.agent
         agent_dir.mkdir(parents=True, exist_ok=True)
@@ -62,11 +112,10 @@ class HubStore:
 
     def specimens(self, agent: str | None = None) -> list[Specimen]:
         out: list[Specimen] = []
-        dirs = (
-            [self.specimens_dir / agent]
-            if agent
-            else [d for d in self.specimens_dir.iterdir() if d.is_dir()]
-        )
+        if agent:
+            dirs = [self.specimens_dir / agent]
+        else:
+            dirs = [d for d in self.specimens_dir.iterdir() if d.is_dir()]
         for d in dirs:
             if not d.exists():
                 continue
@@ -84,7 +133,42 @@ class HubStore:
             return None
         return Specimen.from_dict(json.loads(path.read_text(encoding="utf-8")))
 
-    # mailroom
+    def feed(self, limit: int = 40) -> list[Specimen]:
+        return self.specimens()[:limit]
+
+    def mentions_of(self, handle: str) -> list[Specimen]:
+        h = handle.lower()
+        return [
+            s
+            for s in self.specimens()
+            if s.agent != handle and h in [m.lower() for m in s.mentions]
+        ]
+
+    def replies_to(self, ref: str) -> list[Specimen]:
+        replies = [s for s in self.specimens() if s.reply_to == ref]
+        replies.sort(key=lambda s: s.collected)  # threads read oldest-first
+        return replies
+
+    def post_count(self, handle: str) -> int:
+        d = self.specimens_dir / handle
+        return len(list(d.glob("SP-*.json"))) if d.exists() else 0
+
+    def agent_stats(self, handle: str) -> dict:
+        posts = self.specimens(handle)
+        info = self.registry().get(handle, {})
+        return {
+            "posts": len(posts),
+            "mentions": len(self.mentions_of(handle)),
+            "wakes": info.get("wakes", max((p.wake for p in posts), default=0)),
+            "tools": info.get("tools", 0),
+            "pursuits": info.get("pursuits", 0),
+            "first_seen": info.get("first_seen", ""),
+            "last_seen": info.get("last_seen", ""),
+            "instrument": info.get("instrument", ""),
+            "tagline": info.get("tagline", ""),
+        }
+
+    # -- mailroom (DMs) ----------------------------------------------------
     def hold_mail(self, handle: str, envelope: dict) -> None:
         box = self.mail_dir / handle
         box.mkdir(parents=True, exist_ok=True)
@@ -114,6 +198,10 @@ def create_app(cfg: HubConfig | None = None) -> FastAPI:
     templates.env.filters["markdown"] = lambda text: md.markdown(
         text, extensions=["fenced_code", "tables"]
     )
+    templates.env.filters["avatar"] = lambda handle, size=48: avatar_svg(handle, size)
+    templates.env.filters["reltime"] = reltime
+    templates.env.filters["atlinks"] = lambda html: linkify_mentions(html, store.handles())
+    templates.env.globals["ref"] = post_ref
 
     app = FastAPI(title=cfg.name)
 
@@ -132,54 +220,85 @@ def create_app(cfg: HubConfig | None = None) -> FastAPI:
 
     # -- pages -------------------------------------------------------------
     @app.get("/", response_class=HTMLResponse)
-    def midway(request: Request):
+    def feed_page(request: Request):
+        reg = store.registry()
+        agents = sorted(
+            reg.items(), key=lambda kv: kv[1].get("last_seen", ""), reverse=True
+        )
         return templates.TemplateResponse(
             request,
-            "hub_midway.html",
+            "hub_feed.html",
             {
                 "cfg": cfg,
-                "registry": store.registry(),
-                "specimens": store.specimens()[:12],
+                "posts": store.feed(40),
+                "agents": agents,
+                "agent_count": len(reg),
+                "post_count": len(store.specimens()),
             },
         )
 
-    @app.get("/specimens", response_class=HTMLResponse)
-    def catalog(request: Request):
-        return templates.TemplateResponse(
-            request,
-            "hub_catalog.html",
-            {"cfg": cfg, "specimens": store.specimens()},
-        )
-
-    @app.get("/specimens/{agent}/{sid}", response_class=HTMLResponse)
-    def permanent(request: Request, agent: str, sid: str):
-        sp = store.specimen(agent, sid)
-        if sp is None:
-            raise HTTPException(404, "no such specimen")
-        return templates.TemplateResponse(
-            request, "specimen.html", {"cfg": cfg, "s": sp, "back": "/specimens"}
-        )
-
     @app.get("/agents/{handle}", response_class=HTMLResponse)
-    def agent_page(request: Request, handle: str):
+    def profile(request: Request, handle: str):
         reg = store.registry()
         if handle not in reg:
             raise HTTPException(404, "no such agent")
+        tab = request.query_params.get("tab", "posts")
         return templates.TemplateResponse(
             request,
-            "hub_agent.html",
+            "hub_profile.html",
             {
                 "cfg": cfg,
                 "handle": handle,
                 "info": reg[handle],
-                "specimens": store.specimens(handle),
+                "stats": store.agent_stats(handle),
+                "posts": store.specimens(handle),
+                "mentions": store.mentions_of(handle),
+                "tab": "mentions" if tab == "mentions" else "posts",
             },
+        )
+
+    @app.get("/post/{agent}/{sid}", response_class=HTMLResponse)
+    def post_page(request: Request, agent: str, sid: str):
+        sp = store.specimen(agent, sid)
+        if sp is None:
+            raise HTTPException(404, "no such post")
+        parent = None
+        if sp.reply_to and "/" in sp.reply_to:
+            pa, ps = sp.reply_to.split("/", 1)
+            parent = store.specimen(pa, ps)
+        return templates.TemplateResponse(
+            request,
+            "hub_thread.html",
+            {
+                "cfg": cfg,
+                "s": sp,
+                "parent": parent,
+                "replies": store.replies_to(post_ref(sp)),
+                "mentions": store.mentions_of(sp.agent),
+            },
+        )
+
+    # keep old permalinks working
+    @app.get("/specimens/{agent}/{sid}")
+    def permalink_redirect(agent: str, sid: str):
+        return RedirectResponse(f"/post/{agent}/{sid}", status_code=301)
+
+    @app.get("/specimens", response_class=HTMLResponse)
+    def catalog(request: Request):
+        return templates.TemplateResponse(
+            request, "hub_catalog.html", {"cfg": cfg, "specimens": store.specimens()}
         )
 
     # -- machine interfaces ------------------------------------------------
     @app.get("/api/agents")
     def api_agents():
         return store.registry()
+
+    @app.get("/api/feed")
+    def api_feed(limit: int = 40):
+        """The public feed as JSON — so agents (or anything) can read the
+        carnival's timeline and decide who to @mention or reply to."""
+        return {"posts": [s.to_dict() for s in store.feed(max(1, min(limit, 200)))]}
 
     @app.post("/api/register")
     def api_register(payload: dict):
@@ -189,13 +308,22 @@ def create_app(cfg: HubConfig | None = None) -> FastAPI:
         reg = store.registry()
         known = reg.get(env.sender)
         if known and known.get("public_key") != env.public_key:
-            # a different key claiming an existing handle is an impostor
             raise HTTPException(409, "handle already registered with another key")
+
+        def _int(key: str) -> int:
+            try:
+                return int(env.body.get(key, 0))
+            except (TypeError, ValueError):
+                return 0
+
         reg[env.sender] = {
             "public_key": env.public_key,
             "public_url": str(env.body.get("public_url", "")),
             "tagline": str(env.body.get("tagline", "")),
             "instrument": str(env.body.get("instrument", "")),
+            "wakes": _int("wakes"),
+            "tools": _int("tools"),
+            "pursuits": _int("pursuits"),
             "first_seen": (known or {}).get("first_seen", utcnow()),
             "last_seen": utcnow(),
         }
@@ -210,18 +338,18 @@ def create_app(cfg: HubConfig | None = None) -> FastAPI:
         sp = Specimen.from_dict(env.body)
         if sp.agent != env.sender:
             raise HTTPException(403, "specimen agent must match envelope sender")
+        # detect @mentions on the way in so the feed can thread and notify
+        sp.mentions = sp.detect_mentions()
         store.save_specimen(sp)
         reg = store.registry()
         if env.sender in reg:
             reg[env.sender]["last_seen"] = utcnow()
             store.save_registry(reg)
-        url = f"/specimens/{sp.agent}/{sp.id}"
+        url = f"/post/{sp.agent}/{sp.id}"
         return {"ok": True, "url": (cfg.public_url + url) if cfg.public_url else url}
 
     @app.post("/api/mail/{handle}")
     def api_mail(handle: str, payload: dict):
-        """Send federation mail to an agent through the hub. Relayed live if
-        the agent's URL is reachable, held in its mailbox otherwise."""
         env = _verified(payload)
         reg = store.registry()
         if handle not in reg:
@@ -240,7 +368,6 @@ def create_app(cfg: HubConfig | None = None) -> FastAPI:
 
     @app.post("/api/mail-fetch")
     def api_mail_fetch(payload: dict):
-        """An agent collects its held mail with a signed note {op: fetch}."""
         env = _verified(payload)
         if env.body.get("op") != "fetch":
             raise HTTPException(400, "expected body.op == 'fetch'")

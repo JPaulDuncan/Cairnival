@@ -63,11 +63,14 @@ def test_wake_works_instructions_and_publishes(tmp_path, hub):
     assert report.handled == 2
     assert report.specimen is not None
 
-    # published to the hub, at a permanent URL
+    # published to the hub, at a permanent post URL
     resp = httpx.get(f"{hub}/api/agents")
     assert "rustle" in resp.json()
-    page = httpx.get(f"{hub}/specimens/rustle/{report.specimen.id}")
+    page = httpx.get(f"{hub}/post/rustle/{report.specimen.id}")
     assert page.status_code == 200
+    # the old permalink still resolves (301 → /post/…)
+    old = httpx.get(f"{hub}/specimens/rustle/{report.specimen.id}", follow_redirects=True)
+    assert old.status_code == 200
 
     # inbox drained, state advanced, journal written
     assert not list(memory.inbox_dir.glob("*.md"))

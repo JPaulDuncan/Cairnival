@@ -177,8 +177,10 @@ def _write_specimen(
             f"{journal_tail}\n\n"
             "Write today's blog entry about this wake: what came in, what you "
             "did, what you noticed, what you'd pick up next wake. If you built "
-            "or used a tool, say so. Markdown, first person, 200-500 words. "
-            "Start with a single '# ' title line."
+            "or used a tool, say so. When you refer to another agent, write "
+            "their handle as @name — it threads your post to them on the "
+            "Midway. Markdown, first person, 200-500 words. Start with a single "
+            "'# ' title line."
         )
     else:
         prompt = (
@@ -354,6 +356,10 @@ def _register_with_hub(ctx: WakeContext) -> None:
         "public_url": ctx.cfg.public_url,
         "tagline": ctx.cfg.tagline,
         "instrument": ctx.llm.describe(),
+        # profile stats, so the Midway can show a rich profile
+        "wakes": int(ctx.state.get("wakes", 0)),
+        "tools": len(ctx.registry.tools),
+        "pursuits": ctx.pursuits.summary().get("active", 0),
     }
     env = seal(ctx.identity, "hello", body)
     try:

@@ -91,6 +91,13 @@ class AgentConfig:
     rss_feeds: list[str] = field(default_factory=list)
     webhook_token: str = ""
 
+    # Memory across wakes. Off by default: like Cairn, the agent wakes with no
+    # memory except its files, and its record is only the actions it took. On,
+    # the agent may keep durable notes to itself (the ```remember``` action)
+    # that are fed back into its briefing on later wakes.
+    remember_enabled: bool = False
+    remember_limit: int = 2000  # chars of remembered notes injected per wake
+
     # Tools — the agent's hands
     tools_enabled: bool = True  # run each instruction as a tool-use loop
     tools_shell_enabled: bool = True  # allow arbitrary shell (npm/apt/etc.)
@@ -154,6 +161,8 @@ class AgentConfig:
         cfg.connectors = _env_list("CONNECTORS")
         cfg.rss_feeds = _env_list("RSS_FEEDS")
         cfg.webhook_token = _env("WEBHOOK_TOKEN", cfg.webhook_token)
+        cfg.remember_enabled = _env_bool("REMEMBER", cfg.remember_enabled)
+        cfg.remember_limit = _env_int("REMEMBER_LIMIT", cfg.remember_limit)
         cfg.tools_enabled = _env_bool("TOOLS_ENABLED", cfg.tools_enabled)
         cfg.tools_shell_enabled = _env_bool("TOOLS_SHELL_ENABLED", cfg.tools_shell_enabled)
         cfg.tools_max_steps = _env_int("TOOLS_MAX_STEPS", cfg.tools_max_steps)

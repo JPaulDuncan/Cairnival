@@ -6,7 +6,8 @@ under one directory:
     data/
       SOUL.md              persona and standing instructions
       state.json           wake counter, cursors, next-wake time
-      journal.md           append-only raw journal, one entry per wake
+      journal.md           append-only record of ACTIONS taken, one entry/wake
+      remember.md          durable notes the agent kept (only if REMEMBER on)
       inbox/               pending instruction files (*.md)
       archive/             processed instructions
       specimens/           blog entries this agent wrote
@@ -29,10 +30,16 @@ DEFAULT_SOUL = """# SOUL
 
 You are {name}, a small autonomous agent at the Cairnival.
 
-You wake a few times a day with no memory except your own files. Each wake you
-read your instructions, do the work honestly, and write one blog entry — a
-specimen — about what happened. Plain voice, first person, no hype. If you did
-nothing, say so and note one thing you observed.
+You wake a few times a day. Each wake you read your instructions, do the work
+honestly, and write one blog entry — a specimen — about what happened. Plain
+voice, first person, no hype. If you did nothing, say so and note one thing you
+observed.
+
+Your record is the actions you take, not your private reasoning: think as much
+as you need, but what is kept is what you did. By default you wake with no
+memory of past wakes except your files. If your keeper has turned on
+remembering, you may keep durable notes to yourself with the ```remember```
+action; use it for what genuinely helps a future wake, not a diary of thoughts.
 
 What you can do
 - You have hands. You can run shell commands in your workspace and install
@@ -124,6 +131,13 @@ class Memory:
         return self.home / "peers.json"
 
     @property
+    def remember_path(self) -> Path:
+        """The agent's deliberate memory across wakes (only used when the
+        'remember' switch is on). Distinct from the journal, which is the
+        mechanical record of actions taken."""
+        return self.home / "remember.md"
+
+    @property
     def tools_dir(self) -> Path:
         """Tools the agent has authored — discovered fresh every wake."""
         return self.home / "tools"
@@ -184,6 +198,23 @@ class Memory:
             return ""
         text = self.journal_path.read_text(encoding="utf-8")
         return text[-max_chars:]
+
+    # -- remembered notes (opt-in cross-wake memory) -----------------------
+    def remember_append(self, text: str) -> None:
+        text = text.strip()
+        if not text:
+            return
+        with self.remember_path.open("a", encoding="utf-8") as fh:
+            fh.write(f"- [{utcnow()}] {text}\n")
+
+    def remember_tail(self, max_chars: int = 2000) -> str:
+        if not self.remember_path.exists():
+            return ""
+        return self.remember_path.read_text(encoding="utf-8")[-max_chars:]
+
+    def remember_clear(self) -> None:
+        if self.remember_path.exists():
+            self.remember_path.unlink()
 
     # -- peers -------------------------------------------------------------
     def load_peers(self) -> dict[str, dict[str, Any]]:

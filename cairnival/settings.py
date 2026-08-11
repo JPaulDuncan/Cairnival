@@ -152,6 +152,22 @@ GROUPS: list[Group] = [
         ],
     ),
     Group(
+        "Memory",
+        [
+            Field(
+                "remember_enabled",
+                "Let this agent remember across wakes",
+                "bool",
+                help=(
+                    "off (default): wakes with no memory but its files; only "
+                    "actions are recorded. on: the agent may keep durable notes "
+                    "to itself that are fed back into later wakes."
+                ),
+            ),
+            Field("remember_limit", "Memory injected per wake (chars)", "int"),
+        ],
+    ),
+    Group(
         "Tools — the agent's hands",
         [
             Field(

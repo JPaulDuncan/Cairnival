@@ -41,7 +41,9 @@ from . import messaging
 from .tools import ToolRegistry, ToolError, parse_args
 
 _FENCE_RE = re.compile(r"```([^\n`]*)\n(.*?)```", re.DOTALL)
-_ACTION_VERBS = ("run", "shell", "use", "write-tool", "send", "propose", "final")
+_ACTION_VERBS = (
+    "run", "shell", "use", "write-tool", "send", "propose", "remember", "final"
+)
 
 
 @dataclass
@@ -65,6 +67,10 @@ class LoopResult:
     tools_written: list[str] = field(default_factory=list)
     messages_sent: list[str] = field(default_factory=list)  # peer handles
     proposals: list[str] = field(default_factory=list)  # spend proposal ids
+    remembered: int = 0  # count of notes committed to durable memory
+    # A concise, ordered record of the ACTIONS taken — never the model's
+    # reasoning. This is what the journal persists.
+    actions: list[str] = field(default_factory=list)
 
 
 def parse_action(text: str) -> Action:
@@ -120,6 +126,28 @@ def _parse_kv(body: str) -> dict[str, str]:
     return out
 
 
+def _describe(action: Action) -> str:
+    """A short, factual label for an action — the thing done, not the reasoning
+    behind it. This is what gets recorded in the journal."""
+    first = action.body.strip().splitlines()[0] if action.body.strip() else ""
+    first = first[:120]
+    if action.kind in ("run", "shell"):
+        return f"ran shell: {first}"
+    if action.kind == "use":
+        return f"used tool {action.arg}".strip()
+    if action.kind == "write-tool":
+        fields = _parse_kv(action.body)
+        return f"wrote tool {fields.get('name', action.arg or 'tool')}"
+    if action.kind == "send":
+        return f"messaged {action.arg}"
+    if action.kind == "propose":
+        fields = _parse_kv(action.body)
+        return f"proposed spend of {fields.get('amount', '?')} to {fields.get('to', '?')}"
+    if action.kind == "remember":
+        return "recorded a memory"
+    return action.kind
+
+
 def _peer_roster(ctx) -> str:
     try:
         peers = ctx.memory.load_peers()
@@ -156,7 +184,24 @@ def _situation(ctx, cfg) -> str:
         except Exception:
             pass
     lines.append(f"- Your instrument: {cfg.llm_backend}.")
+    if not cfg.remember_enabled:
+        lines.append(
+            "- You wake with no memory of past wakes except your files; only "
+            "the actions you take are recorded."
+        )
     return "\n".join(lines) if lines else "(no situation data)"
+
+
+def _remembered(ctx, cfg) -> str:
+    if not cfg.remember_enabled:
+        return ""
+    try:
+        tail = ctx.memory.remember_tail(cfg.remember_limit)
+    except Exception:
+        tail = ""
+    if not tail.strip():
+        return ""
+    return "What you remember from past wakes:\n" + tail.strip() + "\n\n"
 
 
 def _system_prompt(soul: str, registry: ToolRegistry, cfg, ctx) -> str:
@@ -184,8 +229,15 @@ def _system_prompt(soul: str, registry: ToolRegistry, cfg, ctx) -> str:
         "reply to you.\n"
         "- ```propose``` — propose a treasury spend (needs a human co-signer; "
         "you can never spend alone). Body: `to:`, `amount:`, `reason:` lines.\n"
-        "- ```final``` — your answer, when the work is done.\n\n"
-        "Your tools right now:\n"
+        + (
+            "- ```remember``` — keep a durable note to yourself; you will see "
+            "it in your briefing on future wakes.\n"
+            if cfg.remember_enabled
+            else ""
+        )
+        + "- ```final``` — your answer, when the work is done.\n\n"
+        + _remembered(ctx, cfg)
+        + "Your tools right now:\n"
         f"{registry.catalog()}\n\n"
         "Other agents you can reach:\n"
         f"{_peer_roster(ctx)}\n\n"
@@ -239,6 +291,19 @@ def _observe(action: Action, registry: ToolRegistry, cfg, result: LoopResult, ct
             f"proposed spend {prop.id}: {amount} to {to}. It is PENDING — a "
             "human must co-sign before anything moves. You cannot approve it."
         )
+    if action.kind == "remember":
+        if not cfg.remember_enabled:
+            return (
+                "remembering is off for this agent, so nothing was kept. Your "
+                "record is the actions you take; enable 'remember' in settings "
+                "to keep durable notes."
+            )
+        note = action.body.strip()
+        if not note:
+            return "remember: nothing to keep (the block was empty)"
+        ctx.memory.remember_append(note)
+        result.remembered += 1
+        return "kept that in memory; you will see it in your briefing next wake."
     if action.kind == "run":
         res = registry.run_shell(action.body)
         return res.render(limit)
@@ -300,7 +365,10 @@ def solve(ctx, instruction, registry: ToolRegistry) -> LoopResult:
 
         observation = _observe(action, registry, cfg, result, ctx)
         result.steps.append(Step(action, observation))
+        result.actions.append(_describe(action))  # the action, not the reasoning
         label = action.arg or action.kind
+        # NOTE: `transcript` is in-memory scratch for the next model turn only.
+        # It is never persisted — the durable record is result.actions.
         transcript += (
             f"\n[action: {action.kind} {label}]\n{action.body}\n"
             f"[result]\n{observation}\n"

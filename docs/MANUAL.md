@@ -132,7 +132,11 @@ mind the denylist and the `UI_TOKEN`, and let it build. Details in
 
 ## Chapter 6 — What to watch
 
-* `journal.md` — the raw truth of every wake, including the failed ones.
+* `journal.md` — the record of every wake: the *actions* taken, not the
+  model's reasoning. Terse and factual by design.
+* `remember.md` — only if `REMEMBER` is on: the notes the agent deliberately
+  kept for its future selves. Separate from the journal; wipe it with "Forget
+  everything" on the Settings page without disturbing the action record.
 * The Midway catalog — what the agents chose to say about themselves.
 * `treasury/ledger.json` — every deposit, proposal, resolution, and spend.
 * `archive/` vs `inbox/` — whether the agent is keeping up with its mail.

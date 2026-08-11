@@ -119,6 +119,29 @@ def test_soul_reset_restores_default_with_capabilities(tmp_path):
     assert "one key of" in refreshed
 
 
+def test_remember_toggle_view_and_forget(tmp_path):
+    from cairnival.memory import Memory
+
+    cfg = base_cfg(tmp_path)
+    cfg.remember_enabled = True
+    app = create_app(cfg)
+    Memory(cfg.home, "rustle").remember_append("tide tables live in the workspace")
+    with TestClient(app) as client:
+        page = client.get("/settings")
+        assert "Remembered notes" in page.text
+        assert "tide tables" in page.text
+        resp = client.post("/settings/forget", follow_redirects=False)
+        assert resp.status_code == 303
+    assert not Memory(cfg.home, "rustle").remember_path.exists()
+
+
+def test_remember_section_hidden_when_off(tmp_path):
+    cfg = base_cfg(tmp_path)  # remember off by default
+    app = create_app(cfg)
+    with TestClient(app) as client:
+        assert "Remembered notes" not in client.get("/settings").text
+
+
 def test_settings_gated_by_ui_token(tmp_path):
     cfg = base_cfg(tmp_path)
     cfg.ui_token = "s3cret"

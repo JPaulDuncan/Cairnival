@@ -83,18 +83,10 @@ def _work_instruction(ctx: WakeContext, ins: Instruction) -> dict[str, Any]:
     single honest reply."""
     if ctx.cfg.tools_enabled:
         outcome = agentloop.solve(ctx, ins, ctx.registry)
-        if outcome.tools_written:
-            ctx.note(f"wrote tool(s): {', '.join(outcome.tools_written)}")
-        if outcome.tools_used:
-            ctx.note(f"used tool(s): {', '.join(outcome.tools_used)}")
-        if outcome.messages_sent:
-            ctx.note(f"messaged agent(s): {', '.join(outcome.messages_sent)}")
-        if outcome.proposals:
-            ctx.note(f"proposed spend(s): {', '.join(outcome.proposals)}")
-        ctx.note(
-            f"worked: {ins.title} [{ins.source}] "
-            f"({len(outcome.steps)} action(s))"
-        )
+        ctx.note(f"worked: {ins.title} [{ins.source}]")
+        # Record each ACTION taken — never the model's reasoning.
+        for desc in outcome.actions:
+            ctx.note(f"  · {desc}")
         return {
             "title": ins.title,
             "source": ins.source,
@@ -103,6 +95,7 @@ def _work_instruction(ctx: WakeContext, ins: Instruction) -> dict[str, Any]:
             "tools_written": outcome.tools_written,
             "messages_sent": outcome.messages_sent,
             "proposals": outcome.proposals,
+            "remembered": outcome.remembered,
             "steps": len(outcome.steps),
         }
 
@@ -130,6 +123,10 @@ def _write_specimen(
 ) -> Specimen:
     soul = ctx.memory.soul()
     journal_tail = ctx.memory.journal_tail(2000)
+    if ctx.cfg.remember_enabled:
+        remembered = ctx.memory.remember_tail(ctx.cfg.remember_limit)
+        if remembered.strip():
+            journal_tail = "What you remember:\n" + remembered + "\n\n" + journal_tail
     if worked:
         def _work_line(w: dict[str, Any]) -> str:
             hands = ""
@@ -185,6 +182,8 @@ def _write_specimen(
         tags.append("correspondence")
     if any(w.get("proposals") for w in worked):
         tags.append("treasury")
+    if any(w.get("remembered") for w in worked):
+        tags.append("remembered")
 
     specimen = Specimen(
         id=next_id(ctx.memory.specimens_dir),

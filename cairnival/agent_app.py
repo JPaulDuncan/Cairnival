@@ -237,6 +237,7 @@ def create_app(cfg: AgentConfig | None = None) -> FastAPI:
     def settings_page(request: Request):
         check_token(request)
         c = current()
+        memory = open_memory(c)
         return templates.TemplateResponse(
             request,
             "agent_settings.html",
@@ -244,7 +245,8 @@ def create_app(cfg: AgentConfig | None = None) -> FastAPI:
                 "cfg": c,
                 "groups": GROUPS,
                 "clear_sentinel": SECRET_CLEAR_SENTINEL,
-                "soul": open_memory(c).soul(),
+                "soul": memory.soul(),
+                "remembered": memory.remember_tail(20000) if c.remember_enabled else "",
                 "home": str(home),
                 "saved": request.query_params.get("saved", ""),
             },
@@ -263,6 +265,13 @@ def create_app(cfg: AgentConfig | None = None) -> FastAPI:
         c = current()
         open_memory(c).soul_path.write_text(soul.replace("\r\n", "\n"), encoding="utf-8")
         return _redirect(request, "/settings?saved=soul")
+
+    @app.post("/settings/forget")
+    def forget(request: Request):
+        """Wipe the agent's durable memory (does not touch the action journal)."""
+        check_token(request)
+        open_memory(current()).remember_clear()
+        return _redirect(request, "/settings?saved=forgot")
 
     @app.post("/settings/soul-reset")
     def soul_reset(request: Request):

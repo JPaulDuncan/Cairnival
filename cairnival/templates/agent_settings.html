@@ -7,6 +7,7 @@
 
 {% if saved == "1" %}<p class="ok">Saved. Changes apply from the next wake — use “Wake now” on the dashboard to apply sooner.</p>{% endif %}
 {% if saved == "soul" %}<p class="ok">Soul saved. It shapes every wake from the next one on.</p>{% endif %}
+{% if saved == "forgot" %}<p class="ok">Memory wiped. The action journal is untouched.</p>{% endif %}
 
 <p class="label">
   saved to {{ home }}/config.json · overrides the environment ·
@@ -44,6 +45,20 @@
   {% endfor %}
   <p><button>Save settings</button></p>
 </form>
+
+{% if cfg.remember_enabled %}
+<h2>Remembered notes</h2>
+<p class="label">this agent's durable memory across wakes — separate from the action journal</p>
+{% if remembered %}
+<pre>{{ remembered }}</pre>
+{% else %}
+<p><em>Nothing remembered yet. The agent adds notes with the <code>remember</code> action.</em></p>
+{% endif %}
+<form method="post" action="/settings/forget"
+      onsubmit="return confirm('Wipe this agent&#39;s remembered notes? The action journal is not affected.')">
+  <button class="quiet">Forget everything</button>
+</form>
+{% endif %}
 
 <h2>Soul</h2>
 <p class="label">the persona and standing rules behind every wake — this is the agent</p>

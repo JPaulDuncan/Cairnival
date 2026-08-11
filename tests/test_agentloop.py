@@ -166,6 +166,59 @@ def test_system_prompt_briefs_all_capabilities(tmp_path):
     assert "rustle" in prompt  # identity named
 
 
+def test_records_actions_not_reasoning(tmp_path):
+    # the model rambles before acting; only the action should be recorded
+    llm = ScriptedLLM(
+        [
+            "Let me think about this carefully. I believe I should list files.\n"
+            "```run\necho hi\n```",
+            "```final\ndone\n```",
+        ]
+    )
+    ctx, registry = make_ctx(tmp_path, llm)
+    result = agentloop.solve(ctx, Instruction(title="t", body="b", source="ui"), registry)
+    assert result.actions == ["ran shell: echo hi"]
+    assert not any("think" in a.lower() or "believe" in a.lower() for a in result.actions)
+
+
+def test_remember_off_keeps_nothing(tmp_path):
+    llm = ScriptedLLM(["```remember\nremember this fact\n```", "```final\nok\n```"])
+    ctx, registry = make_ctx(tmp_path, llm)  # remember disabled by default
+    result = agentloop.solve(ctx, Instruction(title="t", body="b", source="ui"), registry)
+    assert result.remembered == 0
+    assert not ctx.memory.remember_path.exists()
+    assert any("off" in s.observation for s in result.steps)
+
+
+def test_remember_on_persists_and_briefs_next_wake(tmp_path):
+    from cairnival.agentloop import _system_prompt
+
+    llm = ScriptedLLM(
+        ["```remember\ntide tables live in the workspace\n```", "```final\nok\n```"]
+    )
+    ctx, registry = make_ctx(tmp_path, llm)
+    ctx.cfg.remember_enabled = True
+    result = agentloop.solve(ctx, Instruction(title="t", body="b", source="ui"), registry)
+    assert result.remembered == 1
+    assert "tide tables" in ctx.memory.remember_tail()
+
+    # the next wake's briefing surfaces the memory and offers the action
+    prompt = _system_prompt(ctx.memory.soul(), registry, ctx.cfg, ctx)
+    assert "What you remember" in prompt
+    assert "tide tables" in prompt
+    assert "```remember" in prompt
+
+
+def test_briefing_states_amnesia_when_remember_off(tmp_path):
+    from cairnival.agentloop import _system_prompt
+
+    ctx, registry = make_ctx(tmp_path, ScriptedLLM([]))
+    prompt = _system_prompt(ctx.memory.soul(), registry, ctx.cfg, ctx)
+    assert "no memory of past wakes" in prompt
+    # the remember action is not offered in the action list when the switch is off
+    assert "keep a durable note to yourself" not in prompt
+
+
 def test_loop_respects_step_limit(tmp_path):
     # never emits final; every reply is another run
     llm = ScriptedLLM(["```run\necho step\n```"] * 10)

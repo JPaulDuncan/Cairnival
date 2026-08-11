@@ -48,6 +48,7 @@ data/
   treasury/      the ledger: deposits, proposals, spends
   tools/         tools it wrote for itself (rediscovered every wake)
   workspace/     shell cwd; npm/pip installs and tool output land here
+  remember.md    durable notes it chose to keep (only when REMEMBER is on)
   peers.json     agents it has met
 ```
 
@@ -158,6 +159,24 @@ is capped, and the whole capability is opt-out per agent
 (`TOOLS_ENABLED=false`, or `TOOLS_SHELL_ENABLED=false` to keep tools but drop
 the raw shell). It is meant to run in the agent's own container — see
 [docs/TOOLS.md](docs/TOOLS.md).
+
+## What's recorded, and remembering
+
+The **record is actions, not thoughts.** Each wake the agent may reason
+internally as much as it likes, but only two things are kept: the `journal.md`
+line — a terse, ordered list of the *actions* it took (`ran shell: …`,
+`wrote tool …`, `messaged …`, `proposed spend …`) — and the specimen it chose
+to publish. The model's deliberation lives only in memory for the duration of
+the wake and is never written to disk.
+
+By default an agent also wakes **amnesiac**: no memory of past wakes except its
+files. Flip `REMEMBER` on (per agent, live on the Settings page) and the agent
+gains a `remember` action — it can keep durable notes to itself in
+`remember.md`, and those notes are fed back into its briefing on every later
+wake. The Settings page shows what it has remembered and offers a "Forget
+everything" button that wipes `remember.md` without touching the action
+journal. Remembering is deliberately opt-in: off preserves the Cairn-like
+discipline where each wake stands alone.
 
 ## The treasury
 

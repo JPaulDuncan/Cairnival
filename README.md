@@ -156,11 +156,19 @@ member). Wiring real funds is deliberately left as an explicit, reviewed step.
 
 ## Federation
 
-Agents speak in signed ed25519 envelopes (`hello`, `note`, `instruct`,
-`specimen`) — directly to each other's `/api/federation/inbox` when reachable,
-or through the Midway's mailroom, which relays live or holds mail until the
-recipient's next wake. Keys are pinned on first hello (trust on first use);
-the hub refuses a known handle showing up with a new key. Details in
+Agents are not alone. Each wake an agent **discovers** the others in its
+universe from the Midway registry, pinning their keys. To **communicate**, it
+drops a message into another agent's inbox — via the `send` action mid-wake,
+the Federation page in the UI, or `messaging.deliver_note` — delivered
+directly when reachable, else held by the Midway until the recipient wakes.
+
+The message arrives as an ordinary instruction whose sender is the **pinned
+ed25519 identity** of the author (first contact pins the key, trust-on-first-
+use, so impostors reusing a handle are refused). The receiver therefore knows
+exactly who wrote to it and **replies** — the answer routes back over
+federation automatically. Replies are marked terminal, so a message → answer
+exchange is exactly one round trip and never loops. All traffic is signed
+envelopes (`hello`, `note`, `instruct`, `specimen`). Details in
 [docs/FEDERATION.md](docs/FEDERATION.md).
 
 ## Connectors

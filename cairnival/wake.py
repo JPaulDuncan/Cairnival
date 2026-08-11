@@ -22,7 +22,7 @@ from typing import Any
 
 import httpx
 
-from . import agentloop, email_source
+from . import agentloop, email_source, messaging
 from .config import AgentConfig
 from .connectors import BaseConnector, load_connectors
 from .federation import Envelope, Identity, seal, verify
@@ -87,6 +87,8 @@ def _work_instruction(ctx: WakeContext, ins: Instruction) -> dict[str, Any]:
             ctx.note(f"wrote tool(s): {', '.join(outcome.tools_written)}")
         if outcome.tools_used:
             ctx.note(f"used tool(s): {', '.join(outcome.tools_used)}")
+        if outcome.messages_sent:
+            ctx.note(f"messaged agent(s): {', '.join(outcome.messages_sent)}")
         ctx.note(
             f"worked: {ins.title} [{ins.source}] "
             f"({len(outcome.steps)} action(s))"
@@ -97,6 +99,7 @@ def _work_instruction(ctx: WakeContext, ins: Instruction) -> dict[str, Any]:
             "answer": outcome.answer,
             "tools_used": outcome.tools_used,
             "tools_written": outcome.tools_written,
+            "messages_sent": outcome.messages_sent,
             "steps": len(outcome.steps),
         }
 
@@ -175,6 +178,8 @@ def _write_specimen(
         tags.append("toolsmith")
     if any(w.get("tools_used") for w in worked):
         tags.append("tool-use")
+    if any(w.get("messages_sent") for w in worked):
+        tags.append("correspondence")
 
     specimen = Specimen(
         id=next_id(ctx.memory.specimens_dir),
@@ -248,6 +253,15 @@ def _fetch_hub_mail(ctx: WakeContext) -> None:
         pinned = peers.get(env.sender, {}).get("public_key") or None
         if not verify(env, pinned):
             continue
+        # trust on first use: pin an unknown sender's key on first contact
+        if env.sender not in peers:
+            peers[env.sender] = {
+                "public_key": env.public_key,
+                "public_url": str(env.body.get("public_url", "")),
+                "tagline": str(env.body.get("tagline", "")),
+                "discovered": "message",
+                "last_seen": utcnow(),
+            }
         if env.kind == "hello":
             peers[env.sender] = {
                 "public_url": env.body.get("public_url", ""),
@@ -256,17 +270,24 @@ def _fetch_hub_mail(ctx: WakeContext) -> None:
                 "last_seen": utcnow(),
             }
         elif env.kind == "note":
+            is_reply = bool(env.body.get("reply"))
             drop(
                 ctx.memory.inbox_dir,
                 Instruction(
-                    title=f"Mail from {env.sender} (via the Midway)",
+                    title=(
+                        f"Reply from {env.sender} (via the Midway)"
+                        if is_reply
+                        else f"Message from {env.sender} (via the Midway)"
+                    ),
                     body=str(env.body.get("text", "")),
                     source="federation",
                     sender=env.sender,
+                    # a reply is terminal; only a fresh message earns an answer
+                    reply_to="" if is_reply else env.sender,
                     priority=6,
                 ),
             )
-            ctx.note(f"held mail from {env.sender}")
+            ctx.note(f"held {'reply' if is_reply else 'message'} from {env.sender}")
         elif env.kind == "instruct" and env.sender in ctx.cfg.trusted_handles:
             drop(
                 ctx.memory.inbox_dir,
@@ -275,6 +296,7 @@ def _fetch_hub_mail(ctx: WakeContext) -> None:
                     body=str(env.body.get("text", "")),
                     source="federation",
                     sender=env.sender,
+                    reply_to=env.sender,
                     priority=4,
                 ),
             )
@@ -300,15 +322,29 @@ def _register_with_hub(ctx: WakeContext) -> None:
         pass  # registration is repeated every wake; missing one is fine
 
 
+def _discover_peers(ctx: WakeContext) -> None:
+    """Learn the universe from the Midway's registry."""
+    newly = messaging.discover_from_hub(ctx.cfg, ctx.identity, ctx.memory)
+    if newly:
+        ctx.note(f"discovered {len(newly)} peer(s) on the midway: {', '.join(newly)}")
+
+
 def _greet_peers(ctx: WakeContext) -> None:
-    """Say hello to configured peers so they learn our key and URL."""
+    """Say hello directly to peers so they learn our key and URL — both the
+    ones named in config and the ones discovered on the midway."""
     peers = ctx.memory.load_peers()
     body = {
         "handle": ctx.identity.handle,
         "public_url": ctx.cfg.public_url,
         "tagline": ctx.cfg.tagline,
     }
-    for peer_url in ctx.cfg.peers:
+    urls = list(ctx.cfg.peers)
+    for info in peers.values():
+        url = info.get("public_url", "")
+        if url and url not in urls and url != ctx.cfg.public_url:
+            urls.append(url)
+
+    for peer_url in urls:
         env = seal(ctx.identity, "hello", body)
         try:
             resp = httpx.post(
@@ -317,12 +353,16 @@ def _greet_peers(ctx: WakeContext) -> None:
             resp.raise_for_status()
             info = resp.json()
             if isinstance(info, dict) and info.get("handle"):
-                peers[info["handle"]] = {
-                    "public_url": peer_url,
-                    "public_key": info.get("public_key", ""),
-                    "tagline": info.get("tagline", ""),
-                    "last_seen": utcnow(),
-                }
+                known = peers.get(info["handle"], {})
+                known.update(
+                    {
+                        "public_url": peer_url,
+                        "public_key": info.get("public_key", ""),
+                        "tagline": info.get("tagline", known.get("tagline", "")),
+                        "last_seen": utcnow(),
+                    }
+                )
+                peers[info["handle"]] = known
         except (httpx.HTTPError, ValueError):
             continue
     if peers:
@@ -357,6 +397,7 @@ def run_wake(cfg: AgentConfig) -> WakeReport:
         ctx.note(f"email poll failed: {exc}")
 
     _register_with_hub(ctx)
+    _discover_peers(ctx)
     _fetch_hub_mail(ctx)
 
     for ins in _gather_treasury_instructions(ctx):
@@ -375,7 +416,7 @@ def run_wake(cfg: AgentConfig) -> WakeReport:
     # 3. work -------------------------------------------------------------
     queue = pending(memory.inbox_dir)[: cfg.max_instructions_per_wake]
     worked: list[dict[str, str]] = []
-    replies: list[tuple[str, str]] = []  # (reply_to, answer)
+    replies: list[tuple[str, str, str]] = []  # (channel, address, answer)
     tools_written: list[str] = []
     tools_used: list[str] = []
     for ins in queue:
@@ -384,7 +425,8 @@ def run_wake(cfg: AgentConfig) -> WakeReport:
         tools_written.extend(result.get("tools_written", []))
         tools_used.extend(result.get("tools_used", []))
         if ins.reply_to:
-            replies.append((ins.reply_to, result["answer"]))
+            channel = "federation" if ins.source == "federation" else "email"
+            replies.append((channel, ins.reply_to, result["answer"]))
         archive(ins, memory.archive_dir)
 
     # 4. write the specimen -------------------------------------------------
@@ -396,14 +438,23 @@ def run_wake(cfg: AgentConfig) -> WakeReport:
     _publish(ctx, specimen)
 
     # 6. answer mail, greet peers ------------------------------------------
-    for reply_to, answer in replies:
-        sent = email_source.send_reply(
-            cfg,
-            reply_to,
-            f"[{cfg.name}] {specimen.title}",
-            answer + f"\n\n— {cfg.name}, wake {wake_number}",
-        )
-        ctx.note(f"reply to {reply_to}: {'sent' if sent else 'failed/skipped'}")
+    for channel, address, answer in replies:
+        if channel == "federation":
+            ok, how = messaging.deliver_note(
+                cfg, identity, memory, address, answer, reply=True
+            )
+            ctx.note(
+                f"replied to {address} over federation: "
+                f"{how if ok else 'undeliverable'}"
+            )
+        else:
+            sent = email_source.send_reply(
+                cfg,
+                address,
+                f"[{cfg.name}] {specimen.title}",
+                answer + f"\n\n— {cfg.name}, wake {wake_number}",
+            )
+            ctx.note(f"reply to {address}: {'sent' if sent else 'failed/skipped'}")
     for connector in connectors:
         try:
             connector.deliver(ctx, specimen)

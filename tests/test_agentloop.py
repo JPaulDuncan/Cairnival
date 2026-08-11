@@ -7,6 +7,7 @@ from types import SimpleNamespace
 from cairnival import agentloop
 from cairnival.agentloop import parse_action, _parse_tool_spec
 from cairnival.config import AgentConfig
+from cairnival.federation import Identity
 from cairnival.instructions import Instruction
 from cairnival.memory import Memory
 from cairnival.tools import ToolRegistry
@@ -33,9 +34,12 @@ def make_ctx(tmp_path, llm):
     cfg.tools_max_steps = 5
     memory = Memory(tmp_path, "rustle")
     memory.ensure()
+    identity = Identity.load_or_create(memory.keys_dir, "rustle")
     registry = ToolRegistry(memory.tools_dir, memory.workspace_dir, cfg)
     registry.discover()
-    ctx = SimpleNamespace(cfg=cfg, memory=memory, llm=llm, registry=registry)
+    ctx = SimpleNamespace(
+        cfg=cfg, memory=memory, llm=llm, registry=registry, identity=identity
+    )
     return ctx, registry
 
 
@@ -92,6 +96,35 @@ def test_loop_writes_tool_then_uses_it_and_it_persists(tmp_path):
     next_wake = ToolRegistry(ctx.memory.tools_dir, ctx.memory.workspace_dir, ctx.cfg)
     assert "adder" in next_wake.discover()
     assert next_wake.run_tool("adder", ["10", "20"]).output.strip() == "30"
+
+
+def test_send_action_parses():
+    a = parse_action("```send:moth\nhello there\n```")
+    assert a.kind == "send" and a.arg == "moth" and a.body == "hello there"
+
+
+def test_loop_sends_message_to_peer(tmp_path, monkeypatch):
+    # capture deliver_note instead of hitting the network
+    calls = {}
+
+    def fake_deliver(cfg, identity, memory, to_handle, text, **kw):
+        calls["to"] = to_handle
+        calls["text"] = text
+        return True, "direct"
+
+    monkeypatch.setattr("cairnival.agentloop.messaging.deliver_note", fake_deliver)
+    llm = ScriptedLLM(
+        [
+            "```send:moth\nwant to collaborate on tide charts?\n```",
+            "```final\nSent moth a note.\n```",
+        ]
+    )
+    ctx, registry = make_ctx(tmp_path, llm)
+    ins = Instruction(title="reach out", body="ask moth to collaborate", source="ui")
+    result = agentloop.solve(ctx, ins, registry)
+    assert "moth" in result.messages_sent
+    assert calls["to"] == "moth"
+    assert "tide charts" in calls["text"]
 
 
 def test_loop_respects_step_limit(tmp_path):

@@ -25,6 +25,7 @@ from fastapi.templating import Jinja2Templates
 
 from .config import AgentConfig
 from .federation import Envelope, Identity, verify
+from . import messaging
 from .instructions import Instruction, drop
 from .memory import Memory, utcnow
 from .settings import GROUPS, SECRET_CLEAR_SENTINEL, apply_form, load_agent_config
@@ -149,6 +150,45 @@ def create_app(cfg: AgentConfig | None = None) -> FastAPI:
                     request, "specimen.html", {"cfg": c, "s": sp, "back": "/specimens"}
                 )
         raise HTTPException(404, "no such specimen")
+
+    # -- federation --------------------------------------------------------
+    @app.get("/federation", response_class=HTMLResponse)
+    def federation_page(request: Request):
+        c = current()
+        memory = open_memory(c)
+        identity = Identity.load_or_create(memory.keys_dir, c.name)
+        return templates.TemplateResponse(
+            request,
+            "agent_federation.html",
+            {
+                "cfg": c,
+                "identity": identity,
+                "peers": memory.load_peers(),
+                "trusted": c.trusted_handles,
+                "sent": request.query_params.get("sent", ""),
+                "discovered": request.query_params.get("discovered", ""),
+            },
+        )
+
+    @app.post("/federation/discover")
+    def federation_discover(request: Request):
+        check_token(request)
+        c = current()
+        memory = open_memory(c)
+        identity = Identity.load_or_create(memory.keys_dir, c.name)
+        newly = messaging.discover_from_hub(c, identity, memory)
+        return _redirect(request, f"/federation?discovered={len(newly)}")
+
+    @app.post("/federation/send")
+    def federation_send(
+        request: Request, to: str = Form(...), text: str = Form(...)
+    ):
+        check_token(request)
+        c = current()
+        memory = open_memory(c)
+        identity = Identity.load_or_create(memory.keys_dir, c.name)
+        ok, how = messaging.deliver_note(c, identity, memory, to.strip(), text)
+        return _redirect(request, f"/federation?sent={how if ok else 'undeliverable'}")
 
     # -- tools -------------------------------------------------------------
     @app.get("/tools", response_class=HTMLResponse)
@@ -332,6 +372,18 @@ def create_app(cfg: AgentConfig | None = None) -> FastAPI:
         if not verify(env, pinned):
             raise HTTPException(403, "bad signature")
 
+        # Trust on first use: pin an unknown sender's key on first contact of
+        # any kind, so later impostors reusing the handle are caught.
+        if env.sender not in peers:
+            peers[env.sender] = {
+                "public_key": env.public_key,
+                "public_url": str(env.body.get("public_url", "")),
+                "tagline": str(env.body.get("tagline", "")),
+                "discovered": "message",
+                "last_seen": utcnow(),
+            }
+            memory.save_peers(peers)
+
         if env.kind == "hello":
             peers[env.sender] = {
                 "public_url": env.body.get("public_url", ""),
@@ -348,18 +400,24 @@ def create_app(cfg: AgentConfig | None = None) -> FastAPI:
             }
 
         if env.kind == "note":
+            is_reply = bool(env.body.get("reply"))
             drop(
                 memory.inbox_dir,
                 Instruction(
-                    title=f"Mail from {env.sender}",
-                    body=str(env.body.get("text", ""))
-                    + "\n\n(Reply is optional; fold anything worth keeping into the specimen.)",
+                    title=(
+                        f"Reply from {env.sender}"
+                        if is_reply
+                        else f"Message from {env.sender}"
+                    ),
+                    body=str(env.body.get("text", "")),
                     source="federation",
                     sender=env.sender,
+                    # a reply is terminal; a fresh message earns one answer back
+                    reply_to="" if is_reply else env.sender,
                     priority=6,
                 ),
             )
-            return {"ok": True}
+            return {"ok": True, "received_by": identity.handle}
 
         if env.kind == "instruct":
             if env.sender not in c.trusted_handles:
@@ -371,10 +429,11 @@ def create_app(cfg: AgentConfig | None = None) -> FastAPI:
                     body=str(env.body.get("text", "")),
                     source="federation",
                     sender=env.sender,
+                    reply_to=env.sender,
                     priority=4,
                 ),
             )
-            return {"ok": True}
+            return {"ok": True, "received_by": identity.handle}
 
         return {"ok": True, "ignored": env.kind}
 

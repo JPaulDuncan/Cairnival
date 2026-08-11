@@ -2,7 +2,7 @@
 {% block title %}{{ cfg.name }} — Cairnival agent{% endblock %}
 {% block brand %}{{ cfg.name }}{% endblock %}
 {% block tagline %}{{ cfg.tagline }}{% endblock %}
-{% block nav %}<a href="/specimens">specimens</a><a href="/tools">tools</a><a href="/settings">settings</a><a href="/api/status">status.json</a>{% endblock %}
+{% block nav %}<a href="/specimens">specimens</a><a href="/tools">tools</a><a href="/federation">federation</a><a href="/settings">settings</a><a href="/api/status">status.json</a>{% endblock %}
 {% block content %}
 
 <div class="cards">
@@ -98,7 +98,8 @@
   <tr><td>{{ handle }}</td><td>{{ info.tagline }}</td><td>{{ info.last_seen }}</td></tr>
   {% endfor %}
 </table>
-{% else %}<p><em>No peers yet. Configure PEERS or wait for hello mail.</em></p>{% endif %}
+<p><a href="/federation">→ discover agents and send messages</a></p>
+{% else %}<p><em>No peers yet. <a href="/federation">Discover agents on the Midway</a>, configure PEERS, or wait for hello mail.</em></p>{% endif %}
 
 <h2>Recent specimens</h2>
 <div class="cards">

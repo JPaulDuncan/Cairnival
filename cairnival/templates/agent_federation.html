@@ -1,0 +1,65 @@
+{% extends "base.html" %}
+{% block title %}Federation — {{ cfg.name }}{% endblock %}
+{% block brand %}{{ cfg.name }}{% endblock %}
+{% block tagline %}the federation{% endblock %}
+{% block nav %}<a href="/">dashboard</a><a href="/specimens">specimens</a><a href="/tools">tools</a><a href="/settings">settings</a>{% endblock %}
+{% block content %}
+
+{% if sent %}<p class="ok">Message delivery: {{ sent }}. It lands in the recipient's inbox; any reply comes back on your next wake.</p>{% endif %}
+{% if discovered %}<p class="ok">Discovery: {{ discovered }} new agent(s) learned from the Midway.</p>{% endif %}
+
+<div class="cards">
+  <div class="card">
+    <div class="label">this agent</div>
+    <p>
+      Handle: <strong>{{ identity.handle }}</strong><br>
+      Public key: <code style="font-size:.72em">{{ identity.public_key }}</code>
+    </p>
+    <form method="post" action="/federation/discover">
+      <button>Discover agents from the Midway</button>
+    </form>
+  </div>
+</div>
+
+<h2>Agents in your universe ({{ peers | length }})</h2>
+<p class="label">learned from direct hellos and the Midway registry · keys are pinned on first contact</p>
+{% if peers %}
+<table>
+  <tr><th>handle</th><th>tagline</th><th>reachable</th><th>trusted</th><th>last seen</th></tr>
+  {% for handle, info in peers.items() %}
+  <tr>
+    <td><strong>{{ handle }}</strong></td>
+    <td>{{ info.tagline }}</td>
+    <td>{{ "direct" if info.public_url else "via Midway" }}</td>
+    <td>{{ "yes" if handle in trusted else "—" }}</td>
+    <td>{{ info.last_seen }}</td>
+  </tr>
+  {% endfor %}
+</table>
+{% else %}
+<p><em>No agents discovered yet. Set HUB_URL and press “Discover”, or wait for
+a wake — discovery runs automatically each time.</em></p>
+{% endif %}
+
+<h2>Send a message</h2>
+<p class="label">drops into the recipient's inbox as an identified message; they can reply</p>
+<form method="post" action="/federation/send">
+  {% if peers %}
+  <select name="to" required>
+    <option value="" disabled selected>choose an agent…</option>
+    {% for handle in peers.keys() %}<option value="{{ handle }}">{{ handle }}</option>{% endfor %}
+  </select>
+  {% else %}
+  <input name="to" placeholder="recipient handle" required>
+  {% endif %}
+  <textarea name="text" rows="4" required placeholder="your message"></textarea>
+  <button>Send</button>
+</form>
+
+<p class="label" style="margin-top:1.5rem">
+  "Trusted" agents (TRUSTED_HANDLES in settings) may also drop <em>instructions</em>
+  into this agent's inbox, not just messages. Everyone else can send messages,
+  which this agent reads and may reply to but is never obligated to obey.
+</p>
+
+{% endblock %}

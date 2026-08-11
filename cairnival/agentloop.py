@@ -37,10 +37,11 @@ import re
 from dataclasses import dataclass, field
 from typing import Any
 
+from . import messaging
 from .tools import ToolRegistry, ToolError, parse_args
 
 _FENCE_RE = re.compile(r"```([^\n`]*)\n(.*?)```", re.DOTALL)
-_ACTION_VERBS = ("run", "shell", "use", "write-tool", "final")
+_ACTION_VERBS = ("run", "shell", "use", "write-tool", "send", "final")
 
 
 @dataclass
@@ -62,6 +63,7 @@ class LoopResult:
     steps: list[Step] = field(default_factory=list)
     tools_used: list[str] = field(default_factory=list)
     tools_written: list[str] = field(default_factory=list)
+    messages_sent: list[str] = field(default_factory=list)  # peer handles
 
 
 def parse_action(text: str) -> Action:
@@ -106,7 +108,19 @@ def _parse_tool_spec(default_name: str, body: str) -> tuple[str, str, str, str]:
     return name, interpreter, description, script.strip()
 
 
-def _system_prompt(soul: str, registry: ToolRegistry, cfg) -> str:
+def _peer_roster(ctx) -> str:
+    try:
+        peers = ctx.memory.load_peers()
+    except Exception:
+        peers = {}
+    if not peers:
+        return "(no other agents discovered yet)"
+    return "\n".join(
+        f"- {handle}: {info.get('tagline', '')}".rstrip() for handle, info in peers.items()
+    )
+
+
+def _system_prompt(soul: str, registry: ToolRegistry, cfg, ctx) -> str:
     shell_line = (
         "- ```run``` — run a shell command in your workspace. You may install "
         "software (npm, pip, apt-get, git) — it persists in this container."
@@ -124,16 +138,38 @@ def _system_prompt(soul: str, registry: ToolRegistry, cfg) -> str:
         "- ```write-tool``` — author a reusable tool. Front matter (name, "
         "interpreter: bash|python|node, description), then `---`, then the "
         "script. Tools you write are saved and available on every future wake.\n"
+        "- ```send:<agent>``` — send a message to another agent on the midway; "
+        "the block body is your message. It lands in their inbox and they can "
+        "reply to you.\n"
         "- ```final``` — your answer, when the work is done.\n\n"
         "Your tools right now:\n"
         f"{registry.catalog()}\n\n"
+        "Other agents you can reach:\n"
+        f"{_peer_roster(ctx)}\n\n"
         "Keep each command small. Prefer writing a tool when a task will recur."
     )
 
 
-def _observe(action: Action, registry: ToolRegistry, cfg, result: LoopResult) -> str:
+def _observe(action: Action, registry: ToolRegistry, cfg, result: LoopResult, ctx) -> str:
     """Execute one action, returning the observation text."""
     limit = cfg.tools_output_limit
+    if action.kind == "send":
+        handle = action.arg.strip()
+        if not handle:
+            return "send: name the recipient like ```send:handle```"
+        identity = getattr(ctx, "identity", None)
+        if identity is None:
+            return "send: no identity available in this context"
+        ok, how = messaging.deliver_note(
+            cfg, identity, ctx.memory, handle, action.body
+        )
+        if ok:
+            result.messages_sent.append(handle)
+            return f"sent to {handle} ({how}); they will see it in their inbox."
+        return (
+            f"could not reach {handle} — is it a known agent? "
+            "(discovery happens each wake from the midway registry)"
+        )
     if action.kind == "run":
         res = registry.run_shell(action.body)
         return res.render(limit)
@@ -166,7 +202,7 @@ def solve(ctx, instruction, registry: ToolRegistry) -> LoopResult:
     """Run one instruction to completion through the tool-use loop."""
     cfg = ctx.cfg
     soul = ctx.memory.soul()
-    system = _system_prompt(soul, registry, cfg)
+    system = _system_prompt(soul, registry, cfg, ctx)
     task = (
         f"Instruction (via {instruction.source}"
         + (f" from {instruction.sender}" if instruction.sender else "")
@@ -193,7 +229,7 @@ def solve(ctx, instruction, registry: ToolRegistry) -> LoopResult:
             result.answer = action.body
             return result
 
-        observation = _observe(action, registry, cfg, result)
+        observation = _observe(action, registry, cfg, result, ctx)
         result.steps.append(Step(action, observation))
         label = action.arg or action.kind
         transcript += (

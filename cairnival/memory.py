@@ -13,6 +13,8 @@ under one directory:
       outbox/              queued publishes / federation mail to retry
       keys/                ed25519 identity
       treasury/            ledger.json
+      tools/               tools the agent authored (rediscovered every wake)
+      workspace/           shell cwd; npm/pip installs and tool output land here
       peers.json           known peers
 """
 
@@ -89,6 +91,16 @@ class Memory:
     def peers_path(self) -> Path:
         return self.home / "peers.json"
 
+    @property
+    def tools_dir(self) -> Path:
+        """Tools the agent has authored — discovered fresh every wake."""
+        return self.home / "tools"
+
+    @property
+    def workspace_dir(self) -> Path:
+        """Scratch working directory: shell cwd, npm installs, tool output."""
+        return self.home / "workspace"
+
     def ensure(self) -> None:
         """Create the world if it does not exist yet."""
         for d in (
@@ -99,6 +111,8 @@ class Memory:
             self.outbox_dir,
             self.keys_dir,
             self.treasury_dir,
+            self.tools_dir,
+            self.workspace_dir,
         ):
             d.mkdir(parents=True, exist_ok=True)
         if not self.soul_path.exists():

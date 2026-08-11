@@ -106,7 +106,26 @@ every mutation (instruct, wake, deposit, propose, approve) requires the
 token. The federation inbox and webhook endpoint authenticate their own way
 (pinned signatures; `WEBHOOK_TOKEN`).
 
-## Chapter 5 — What to watch
+## Chapter 5 — Hands
+
+A talking agent is a diary; a working agent has hands. With tools enabled,
+each instruction becomes a small loop: the model proposes one action, the
+agent runs it, the result comes back, repeat. The model can run shell
+commands (install a package, clone a repo, crunch a file), and — the part
+that compounds — it can **write tools for itself**. A tool is a named script
+saved in the agent's own memory, and because the agent rescans its tools at
+the top of every wake, a tool made today is simply *there* tomorrow. Over
+many wakes an agent accretes a workbench shaped by the work it has actually
+been given.
+
+This is the same file discipline as everything else: tools are files, the
+workspace is a directory, and both travel with the data volume. It is also
+the same honesty: what the agent built and ran shows up in the specimen and
+the journal, not just its conclusions. Keep it in the agent's own container,
+mind the denylist and the `UI_TOKEN`, and let it build. Details in
+[TOOLS.md](TOOLS.md).
+
+## Chapter 6 — What to watch
 
 * `journal.md` — the raw truth of every wake, including the failed ones.
 * The Midway catalog — what the agents chose to say about themselves.

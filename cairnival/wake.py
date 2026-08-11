@@ -22,7 +22,7 @@ from typing import Any
 
 import httpx
 
-from . import email_source
+from . import agentloop, email_source
 from .config import AgentConfig
 from .connectors import BaseConnector, load_connectors
 from .federation import Envelope, Identity, seal, verify
@@ -30,6 +30,7 @@ from .instructions import Instruction, archive, drop, pending
 from .llm import LLMBackend, LLMError, build_backend
 from .memory import Memory, utcnow
 from .specimens import Specimen, next_id, save
+from .tools import ToolRegistry
 from .treasury import Ledger
 
 
@@ -41,6 +42,7 @@ class WakeContext:
     identity: Identity
     ledger: Ledger
     llm: LLMBackend
+    registry: ToolRegistry
     log: list[str] = field(default_factory=list)
 
     def note(self, line: str) -> None:
@@ -53,6 +55,8 @@ class WakeReport:
     specimen: Specimen | None
     handled: int
     log: list[str]
+    tools_written: list[str] = field(default_factory=list)
+    tools_used: list[str] = field(default_factory=list)
 
 
 def _gather_treasury_instructions(ctx: WakeContext) -> list[Instruction]:
@@ -73,7 +77,29 @@ def _gather_treasury_instructions(ctx: WakeContext) -> list[Instruction]:
     return out
 
 
-def _work_instruction(ctx: WakeContext, ins: Instruction) -> dict[str, str]:
+def _work_instruction(ctx: WakeContext, ins: Instruction) -> dict[str, Any]:
+    """Do one instruction. With tools enabled this is an agentic loop the
+    model drives (shell, its own tools, writing new tools); otherwise it is a
+    single honest reply."""
+    if ctx.cfg.tools_enabled:
+        outcome = agentloop.solve(ctx, ins, ctx.registry)
+        if outcome.tools_written:
+            ctx.note(f"wrote tool(s): {', '.join(outcome.tools_written)}")
+        if outcome.tools_used:
+            ctx.note(f"used tool(s): {', '.join(outcome.tools_used)}")
+        ctx.note(
+            f"worked: {ins.title} [{ins.source}] "
+            f"({len(outcome.steps)} action(s))"
+        )
+        return {
+            "title": ins.title,
+            "source": ins.source,
+            "answer": outcome.answer,
+            "tools_used": outcome.tools_used,
+            "tools_written": outcome.tools_written,
+            "steps": len(outcome.steps),
+        }
+
     soul = ctx.memory.soul()
     prompt = (
         f"An instruction arrived via {ins.source}"
@@ -99,17 +125,25 @@ def _write_specimen(
     soul = ctx.memory.soul()
     journal_tail = ctx.memory.journal_tail(2000)
     if worked:
-        transcript = "\n\n".join(
-            f"### {w['title']} (via {w['source']})\n{w['answer']}" for w in worked
-        )
+        def _work_line(w: dict[str, Any]) -> str:
+            hands = ""
+            if w.get("tools_written"):
+                hands += f"\n(wrote tool: {', '.join(w['tools_written'])})"
+            if w.get("tools_used"):
+                hands += f"\n(used tool: {', '.join(w['tools_used'])})"
+            return f"### {w['title']} (via {w['source']}){hands}\n{w['answer']}"
+
+        transcript = "\n\n".join(_work_line(w) for w in worked)
         prompt = (
-            f"This is wake #{wake_number}. You just did the following work:\n\n"
+            f"This is wake #{wake_number}. You just did the following work"
+            " (including any commands you ran or tools you wrote):\n\n"
             f"{transcript}\n\n"
             "Recent journal for continuity:\n"
             f"{journal_tail}\n\n"
             "Write today's blog entry about this wake: what came in, what you "
-            "did, what you noticed, what you'd pick up next wake. Markdown, "
-            "first person, 200-500 words. Start with a single '# ' title line."
+            "did, what you noticed, what you'd pick up next wake. If you built "
+            "or used a tool, say so. Markdown, first person, 200-500 words. "
+            "Start with a single '# ' title line."
         )
     else:
         prompt = (
@@ -136,6 +170,12 @@ def _write_specimen(
         title = lines[0].lstrip("# ").strip() or title
         body = "\n".join(lines[1:]).strip()
 
+    tags = sorted({w["source"].split(":")[0] for w in worked}) or ["quiet"]
+    if any(w.get("tools_written") for w in worked):
+        tags.append("toolsmith")
+    if any(w.get("tools_used") for w in worked):
+        tags.append("tool-use")
+
     specimen = Specimen(
         id=next_id(ctx.memory.specimens_dir),
         agent=ctx.identity.handle,
@@ -143,7 +183,7 @@ def _write_specimen(
         body=body,
         wake=wake_number,
         instrument=ctx.llm.describe(),
-        tags=sorted({w["source"].split(":")[0] for w in worked}) or ["quiet"],
+        tags=tags,
         sources=[w["title"][:80] for w in worked],
     )
     save(specimen, ctx.memory.specimens_dir)
@@ -297,10 +337,16 @@ def run_wake(cfg: AgentConfig) -> WakeReport:
     identity = Identity.load_or_create(memory.keys_dir, cfg.name)
     ledger = Ledger(memory.treasury_dir)
     llm = build_backend(cfg)
-    ctx = WakeContext(cfg, memory, state, identity, ledger, llm)
+    registry = ToolRegistry(memory.tools_dir, memory.workspace_dir, cfg)
+    ctx = WakeContext(cfg, memory, state, identity, ledger, llm, registry)
 
     wake_number = int(state.get("wakes", 0)) + 1
     ctx.note(f"wake {wake_number} at {utcnow()}")
+
+    # 1b. discover the tools we have, fresh — including any we wrote before
+    discovered = registry.discover()
+    if discovered:
+        ctx.note(f"discovered {len(discovered)} tool(s): {', '.join(discovered)}")
 
     # 2. read everything addressed to us ----------------------------------
     try:
@@ -330,9 +376,13 @@ def run_wake(cfg: AgentConfig) -> WakeReport:
     queue = pending(memory.inbox_dir)[: cfg.max_instructions_per_wake]
     worked: list[dict[str, str]] = []
     replies: list[tuple[str, str]] = []  # (reply_to, answer)
+    tools_written: list[str] = []
+    tools_used: list[str] = []
     for ins in queue:
         result = _work_instruction(ctx, ins)
         worked.append(result)
+        tools_written.extend(result.get("tools_written", []))
+        tools_used.extend(result.get("tools_used", []))
         if ins.reply_to:
             replies.append((ins.reply_to, result["answer"]))
         archive(ins, memory.archive_dir)
@@ -370,7 +420,9 @@ def run_wake(cfg: AgentConfig) -> WakeReport:
     state["last_wake"] = utcnow()
     memory.save_state(ctx.state)
 
-    return WakeReport(wake_number, specimen, len(worked), ctx.log)
+    return WakeReport(
+        wake_number, specimen, len(worked), ctx.log, tools_written, tools_used
+    )
 
 
 def next_wake_delay_seconds(cfg: AgentConfig) -> int:

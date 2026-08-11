@@ -91,6 +91,24 @@ class AgentConfig:
     rss_feeds: list[str] = field(default_factory=list)
     webhook_token: str = ""
 
+    # Tools — the agent's hands
+    tools_enabled: bool = True  # run each instruction as a tool-use loop
+    tools_shell_enabled: bool = True  # allow arbitrary shell (npm/apt/etc.)
+    tools_max_steps: int = 4  # max tool actions per instruction
+    tools_timeout_seconds: int = 120  # per command/tool invocation
+    tools_output_limit: int = 4000  # chars of output fed back to the model
+    tools_denylist: list[str] = field(
+        default_factory=lambda: [
+            "rm -rf /",
+            "mkfs",
+            ":(){",  # fork bomb
+            "shutdown",
+            "reboot",
+            "dd if=",
+            "> /dev/sd",
+        ]
+    )
+
     @classmethod
     def from_env(cls) -> "AgentConfig":
         cfg = cls()
@@ -136,6 +154,13 @@ class AgentConfig:
         cfg.connectors = _env_list("CONNECTORS")
         cfg.rss_feeds = _env_list("RSS_FEEDS")
         cfg.webhook_token = _env("WEBHOOK_TOKEN", cfg.webhook_token)
+        cfg.tools_enabled = _env_bool("TOOLS_ENABLED", cfg.tools_enabled)
+        cfg.tools_shell_enabled = _env_bool("TOOLS_SHELL_ENABLED", cfg.tools_shell_enabled)
+        cfg.tools_max_steps = _env_int("TOOLS_MAX_STEPS", cfg.tools_max_steps)
+        cfg.tools_timeout_seconds = _env_int("TOOLS_TIMEOUT_SECONDS", cfg.tools_timeout_seconds)
+        cfg.tools_output_limit = _env_int("TOOLS_OUTPUT_LIMIT", cfg.tools_output_limit)
+        if _env("TOOLS_DENYLIST"):
+            cfg.tools_denylist = _env_list("TOOLS_DENYLIST")
         return cfg
 
 

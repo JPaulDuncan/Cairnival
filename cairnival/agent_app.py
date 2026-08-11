@@ -29,6 +29,7 @@ from .instructions import Instruction, drop
 from .memory import Memory, utcnow
 from .settings import GROUPS, SECRET_CLEAR_SENTINEL, apply_form, load_agent_config
 from .specimens import load_all
+from .tools import ToolRegistry, parse_args
 from .treasury import Ledger
 from .wake import next_wake_delay_seconds, run_wake
 
@@ -110,6 +111,7 @@ def create_app(cfg: AgentConfig | None = None) -> FastAPI:
         memory = open_memory(c)
         identity = Identity.load_or_create(memory.keys_dir, c.name)
         ledger = Ledger(memory.treasury_dir)
+        registry = ToolRegistry(memory.tools_dir, memory.workspace_dir, c)
         state = memory.load_state()
         return templates.TemplateResponse(
             request,
@@ -121,6 +123,7 @@ def create_app(cfg: AgentConfig | None = None) -> FastAPI:
                 "scheduler": scheduler_state,
                 "specimens": load_all(memory.specimens_dir)[:8],
                 "inbox_count": len(sorted(memory.inbox_dir.glob("*.md"))),
+                "tool_count": len(registry.discover()),
                 "treasury": ledger.summary(),
                 "proposals": ledger.proposals("pending"),
                 "peers": memory.load_peers(),
@@ -146,6 +149,48 @@ def create_app(cfg: AgentConfig | None = None) -> FastAPI:
                     request, "specimen.html", {"cfg": c, "s": sp, "back": "/specimens"}
                 )
         raise HTTPException(404, "no such specimen")
+
+    # -- tools -------------------------------------------------------------
+    @app.get("/tools", response_class=HTMLResponse)
+    def tools_page(request: Request):
+        c = current()
+        memory = open_memory(c)
+        registry = ToolRegistry(memory.tools_dir, memory.workspace_dir, c)
+        registry.discover()
+        return templates.TemplateResponse(
+            request,
+            "agent_tools.html",
+            {
+                "cfg": c,
+                "tools": list(registry.tools.values()),
+                "workspace": str(memory.workspace_dir),
+                "ran": request.query_params.get("ran", ""),
+                "output": _last_tool_output.get("text", ""),
+            },
+        )
+
+    _last_tool_output: dict[str, str] = {}
+
+    @app.post("/tools/run")
+    def tools_run(request: Request, name: str = Form(...), args: str = Form("")):
+        check_token(request)
+        c = current()
+        memory = open_memory(c)
+        registry = ToolRegistry(memory.tools_dir, memory.workspace_dir, c)
+        registry.discover()
+        result = registry.run_tool(name, parse_args(args))
+        _last_tool_output["text"] = result.render(c.tools_output_limit)
+        return _redirect(request, f"/tools?ran={name}")
+
+    @app.post("/tools/shell")
+    def tools_shell(request: Request, command: str = Form(...)):
+        check_token(request)
+        c = current()
+        memory = open_memory(c)
+        registry = ToolRegistry(memory.tools_dir, memory.workspace_dir, c)
+        result = registry.run_shell(command)
+        _last_tool_output["text"] = f"$ {command}\n" + result.render(c.tools_output_limit)
+        return _redirect(request, "/tools?ran=shell")
 
     # -- settings ----------------------------------------------------------
     @app.get("/settings", response_class=HTMLResponse)
@@ -254,6 +299,9 @@ def create_app(cfg: AgentConfig | None = None) -> FastAPI:
             "waking_now": scheduler_state["running"],
             "treasury": Ledger(memory.treasury_dir).summary(),
             "specimens": len(list(memory.specimens_dir.glob("SP-*.md"))),
+            "tools": len(
+                ToolRegistry(memory.tools_dir, memory.workspace_dir, c).discover()
+            ),
         }
 
     @app.post("/api/federation/inbox")

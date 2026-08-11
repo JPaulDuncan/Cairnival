@@ -152,6 +152,32 @@ GROUPS: list[Group] = [
         ],
     ),
     Group(
+        "Tools — the agent's hands",
+        [
+            Field(
+                "tools_enabled",
+                "Run instructions as a tool-use loop",
+                "bool",
+                help="off = a single reply per instruction, no shell or tools",
+            ),
+            Field(
+                "tools_shell_enabled",
+                "Allow the shell (npm, pip, apt, git …)",
+                "bool",
+                help="commands run in the workspace and persist in this container",
+            ),
+            Field("tools_max_steps", "Max tool actions per instruction", "int"),
+            Field("tools_timeout_seconds", "Per-command timeout (seconds)", "int"),
+            Field("tools_output_limit", "Output fed back to the model (chars)", "int"),
+            Field(
+                "tools_denylist",
+                "Command denylist",
+                "list",
+                help="substrings that are refused before running",
+            ),
+        ],
+    ),
+    Group(
         "Attach UI",
         [
             Field(

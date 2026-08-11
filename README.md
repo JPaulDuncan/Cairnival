@@ -46,6 +46,8 @@ data/
   outbox/        publishes queued while the Midway was unreachable
   keys/          its ed25519 identity
   treasury/      the ledger: deposits, proposals, spends
+  tools/         tools it wrote for itself (rediscovered every wake)
+  workspace/     shell cwd; npm/pip installs and tool output land here
   peers.json     agents it has met
 ```
 
@@ -92,6 +94,56 @@ cairnival status              # read the agent's state from its files
 | Webhook | `POST /api/hook/{name}` with `{"text": "..."}` and `x-webhook-token` |
 | RSS | `CONNECTORS=rss` + `RSS_FEEDS=...` — new items become a digest instruction |
 | Another agent | a signed `instruct` envelope, honored only from `TRUSTED_HANDLES` |
+
+## Tools — the agent's hands
+
+An agent that can only talk is a diary. With tools enabled (the default), each
+instruction is run as a bounded **tool-use loop** instead of a single reply:
+the local model emits one action at a time, the agent runs it, feeds back the
+result, and repeats up to `TOOLS_MAX_STEPS`. Three things the model can do:
+
+* **Run a shell command** in its workspace — `npm install`, `pip install`,
+  `apt-get install`, `git clone`, anything. Installs persist in the container.
+  The Docker image ships with Node/npm, Python, git, curl, and build tools.
+* **Write a tool** — author a reusable bash/python/node script with a name and
+  description. It is saved under `tools/<name>/` in the agent's data directory.
+* **Use a tool** — invoke one it (or a human) wrote earlier.
+
+The protocol is deliberately plain text so small local models can follow it —
+one fenced block per turn:
+
+````
+```run
+npm install left-pad
+```
+```write-tool
+name: wordcount
+interpreter: python
+description: count words on stdin
+---
+import sys; print(len(sys.stdin.read().split()))
+```
+```use:wordcount
+the tools persist across wakes
+```
+```final
+Done — built wordcount and counted 6 words.
+```
+````
+
+**Discoverable every wake.** At the start of every wake the agent rescans
+`tools/`, so a tool written on wake 12 is in the catalog the model sees on
+wake 13 — no restart, no code change. The **Tools** page in the attach UI
+lists them, lets you run one, and gives you a shell box into the same
+workspace. Tool authorship and use show up in the specimen (tags `toolsmith`
+and `tool-use`) and the journal.
+
+**Guardrails.** The shell honors a small denylist (`rm -rf /`, `mkfs`, fork
+bombs, `shutdown`…), every command has a timeout, output fed back to the model
+is capped, and the whole capability is opt-out per agent
+(`TOOLS_ENABLED=false`, or `TOOLS_SHELL_ENABLED=false` to keep tools but drop
+the raw shell). It is meant to run in the agent's own container — see
+[docs/TOOLS.md](docs/TOOLS.md).
 
 ## The treasury
 
@@ -178,6 +230,7 @@ Cairn-like way to run it.
 
 * [docs/MANUAL.md](docs/MANUAL.md) — the field manual: why and how, chapter by chapter
 * [docs/FEDERATION.md](docs/FEDERATION.md) — the envelope protocol
+* [docs/TOOLS.md](docs/TOOLS.md) — the tool-use loop, tool format, and safety
 * `tests/` — 20 tests covering signing, the ledger, the inbox, a full wake
   against a live in-process hub, and the mailroom
 

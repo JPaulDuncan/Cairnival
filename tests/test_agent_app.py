@@ -66,6 +66,27 @@ def test_federation_hello_then_untrusted_instruct(tmp_path):
         assert client.post("/api/federation/inbox", json=forged.to_dict()).status_code == 403
 
 
+def test_tools_page_and_shell_run(tmp_path):
+    cfg, app = make_app(tmp_path)
+    with TestClient(app) as client:
+        assert client.get("/tools").status_code == 200
+        resp = client.post(
+            "/tools/shell", data={"command": "echo from-the-ui"}, follow_redirects=True
+        )
+        assert resp.status_code == 200
+        assert "from-the-ui" in resp.text
+
+
+def test_tools_shell_gated_by_token(tmp_path):
+    cfg, app = make_app(tmp_path, ui_token="s3cret")
+    with TestClient(app) as client:
+        assert client.get("/tools").status_code == 200  # reading is open
+        denied = client.post(
+            "/tools/shell", data={"command": "echo hi"}, follow_redirects=False
+        )
+        assert denied.status_code == 403
+
+
 def test_webhook_connector(tmp_path):
     cfg, app = make_app(tmp_path, webhook_token="hook")
     with TestClient(app) as client:

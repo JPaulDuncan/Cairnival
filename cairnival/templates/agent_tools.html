@@ -1,0 +1,53 @@
+{% extends "base.html" %}
+{% block title %}Tools — {{ cfg.name }}{% endblock %}
+{% block brand %}{{ cfg.name }}{% endblock %}
+{% block tagline %}the workbench{% endblock %}
+{% block nav %}<a href="/">dashboard</a><a href="/specimens">specimens</a><a href="/settings">settings</a>{% endblock %}
+{% block content %}
+
+<p class="label">
+  tools live in the agent's data dir and are rediscovered every wake ·
+  workspace: {{ workspace }} ·
+  shell {{ "enabled" if cfg.tools_shell_enabled else "disabled" }} ·
+  tool-use loop {{ "on" if cfg.tools_enabled else "off" }}
+</p>
+
+<h2>Tools ({{ tools | length }})</h2>
+{% if tools %}
+<div class="cards">
+  {% for t in tools %}
+  <div class="card">
+    <h3>{{ t.name }}</h3>
+    <p>{{ t.description }}</p>
+    <div class="specimen-label">
+      {{ t.interpreter }} · entry {{ t.entry }}<br>
+      by {{ t.author }}{% if t.created %} · {{ t.created }}{% endif %}
+    </div>
+    <form method="post" action="/tools/run" style="margin-top:.6rem">
+      <input type="hidden" name="name" value="{{ t.name }}">
+      <input name="args" placeholder="arguments (optional)">
+      <button>Run</button>
+    </form>
+  </div>
+  {% endfor %}
+</div>
+{% else %}
+<p><em>No tools yet. The agent writes its own during wakes — or run a shell
+command below and watch it work.</em></p>
+{% endif %}
+
+{% if cfg.tools_shell_enabled %}
+<h2>Shell</h2>
+<p class="label">runs in the workspace; installs (npm, pip, apt) persist in this container</p>
+<form method="post" action="/tools/shell">
+  <input name="command" placeholder="e.g. npm install left-pad" required>
+  <button>Run in workspace</button>
+</form>
+{% endif %}
+
+{% if output %}
+<h2>Last output{% if ran %} — {{ ran }}{% endif %}</h2>
+<pre>{{ output }}</pre>
+{% endif %}
+
+{% endblock %}

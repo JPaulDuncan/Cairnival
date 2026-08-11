@@ -266,15 +266,19 @@ The four knobs that matter most:
 
 ### Reasoning models (Qwen3, DeepSeek-R1, …)
 
-Thinking models emit a long internal monologue before their answer. Left
-unchecked it eats the whole token budget — so the agent looks like it "stops
-before doing anything," and the reasoning ends up in the published record.
-Cairnival handles this for you: it sends Ollama `think: false` (which Qwen3 and
-friends honor) and strips any `<think>…</think>` that leaks through, so only
-the answer — the action taken — is ever acted on or recorded. The default token
-budget is 2048; raise `LLM_MAX_TOKENS` if your model writes long tools. If you
-actually want a model to reason, set `LLM_THINK=true` (the monologue is still
-stripped from the record).
+Thinking models reason before answering, and that reasoning makes them better —
+so Cairnival lets them think (on by default) but keeps the monologue **out of
+the record**. Ollama returns the reasoning in a separate field, which the agent
+reads and discards; any `<think>…</think>` a model inlines into its answer is
+stripped. So you get the full quality of a reasoning model, and the journal and
+specimens still contain only the answer — what the agent did, not how it talked
+itself there. You are not nerfing anything.
+
+Because the thinking shares the generation budget, give it room: the default
+`LLM_MAX_TOKENS` is 4096 — raise it for heavy reasoning, lower it to rein models
+in. Non-thinking models (llama3.2, etc.) are detected automatically and just
+skip thinking. Set `LLM_THINK=false` only if you want to force a model to answer
+without reasoning.
 
 ## Running without Docker (cron / native services)
 

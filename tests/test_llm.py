@@ -35,45 +35,53 @@ class FakeResponse:
         return self._payload
 
 
-def test_ollama_sends_think_false_and_strips(monkeypatch):
+def test_ollama_thinks_by_default_and_keeps_only_the_answer(monkeypatch):
     captured = {}
 
     def fake_post(url, json=None, timeout=None):
-        captured["url"] = url
         captured["json"] = json
+        # Ollama separates reasoning (thinking) from the answer (content);
+        # a stray inline <think> in content should also be stripped.
         return FakeResponse(
-            {"message": {"content": "<think>reasoning here</think>The real answer."}}
+            {
+                "message": {
+                    "thinking": "long private chain of thought…",
+                    "content": "<think>oops</think>The real answer.",
+                }
+            }
         )
 
     monkeypatch.setattr(httpx, "post", fake_post)
     backend = OllamaBackend("http://x:11434", "qwen3:30b-a3b")
     out = backend.chat("sys", "prompt")
-    assert out == "The real answer."
-    assert captured["json"]["think"] is False  # thinking disabled by default
+    assert out == "The real answer."          # only the answer, reasoning dropped
+    assert captured["json"]["think"] is True  # thinking is ON by default
 
 
-def test_ollama_retries_without_think_on_400(monkeypatch):
+def test_ollama_downgrades_once_for_nonthinking_models(monkeypatch):
     calls = {"n": 0}
 
     def fake_post(url, json=None, timeout=None):
         calls["n"] += 1
-        if "think" in json:
+        if json.get("think"):
             req = httpx.Request("POST", url)
             resp = httpx.Response(400, request=req)
-            raise httpx.HTTPStatusError("bad", request=req, response=resp)
+            raise httpx.HTTPStatusError("no think", request=req, response=resp)
         return FakeResponse({"message": {"content": "ok"}})
 
     monkeypatch.setattr(httpx, "post", fake_post)
     backend = OllamaBackend("http://x:11434", "llama3.2")
     assert backend.chat("s", "p") == "ok"
-    assert calls["n"] == 2  # first with think (400), retried without
+    assert calls["n"] == 2          # first with think (400), retried without
+    assert backend.think is False   # downgrade is memoized...
+    backend.chat("s", "p")
+    assert calls["n"] == 3          # ...so the next call doesn't retry
 
 
-def test_build_backend_threads_think_flag():
+def test_build_backend_defaults_to_thinking():
     cfg = AgentConfig()
     cfg.llm_backend = "ollama"
-    cfg.llm_think = True
     backend = build_backend(cfg)
     assert isinstance(backend, OllamaBackend)
-    assert backend.think is True
-    assert cfg.llm_max_tokens == 2048  # roomier default for real work
+    assert backend.think is True      # on by default
+    assert cfg.llm_max_tokens == 4096  # roomy budget so thinking fits

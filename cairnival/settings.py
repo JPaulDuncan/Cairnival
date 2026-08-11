@@ -86,12 +86,13 @@ GROUPS: list[Group] = [
             Field("llm_max_tokens", "Max tokens", "int"),
             Field(
                 "llm_think",
-                "Allow reasoning models to think",
+                "Let reasoning models think",
                 "bool",
                 help=(
-                    "off (default): tell Qwen3/R1-style models not to think, so "
-                    "tokens go to the answer and no monologue is recorded. "
-                    "Leaked <think> blocks are stripped either way."
+                    "on (default): Qwen3/R1-style models reason before answering "
+                    "— the answer is better for it. The reasoning is used but "
+                    "never recorded (kept out of the journal and specimens). "
+                    "Give thinking room via Max tokens."
                 ),
             ),
         ],

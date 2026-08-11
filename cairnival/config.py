@@ -54,11 +54,13 @@ class AgentConfig:
     llamacpp_bin: str = "llama-cli"
     llamacpp_model_path: str = ""
     llm_timeout_seconds: int = 300
-    llm_max_tokens: int = 2048
-    # Reasoning models (Qwen3, DeepSeek-R1, …) think before answering. Off by
-    # default: the monologue wastes tokens and must never reach the record.
-    # Leaked <think> blocks are stripped regardless of this setting.
-    llm_think: bool = False
+    llm_max_tokens: int = 4096
+    # Let reasoning models (Qwen3, DeepSeek-R1, …) actually reason. ON by
+    # default — the answer is conditioned on the chain-of-thought, which makes
+    # the agent smarter. The reasoning is used but NEVER recorded: Ollama
+    # returns it in a separate field we discard, and any inline <think> block
+    # is stripped. Set false only to force a model to answer without thinking.
+    llm_think: bool = True
 
     # The Midway (central hub)
     hub_url: str = ""

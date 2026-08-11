@@ -9,17 +9,21 @@ The agent thinks with whatever is on the machine:
 
 All backends implement ``chat(system, prompt) -> str``.
 
-Reasoning ("thinking") models — Qwen3, DeepSeek-R1, and the like — emit a long
-internal monologue before their answer. That monologue is not something we want
-to act on or publish: it burns the token budget and, if it lands in a specimen,
-turns the record into a stream of consciousness. So we do two things:
+Reasoning ("thinking") models — Qwen3, DeepSeek-R1, and the like — reason before
+answering, and that reasoning makes the answer better. We *want* the model to
+think. What we don't want is the monologue in the permanent record. So the rule
+is **think freely, publish only the answer**:
 
-* ask the model not to think in the first place (Ollama's ``think: false``,
-  which Qwen3 and friends honor), and
-* strip any reasoning that leaks through anyway (``<think>…</think>`` blocks),
+* thinking is ON by default; the answer is conditioned on the chain-of-thought,
+* Ollama returns the reasoning in a separate ``thinking`` field, which we read
+  and deliberately discard (never journaled, never in a specimen),
+* any ``<think>…</think>`` a model inlines into its answer is stripped as a
+  safety net.
 
-so every backend returns only the answer — the thing the agent actually said or
-did, never how it talked itself there.
+So the model is not nerfed — it reasons fully — and every backend still returns
+only the answer: what the agent actually said or did, not how it got there.
+Give reasoning models room (``LLM_MAX_TOKENS``, default 4096) since the thinking
+shares the budget.
 """
 
 from __future__ import annotations
@@ -90,24 +94,36 @@ class OllamaBackend(LLMBackend):
         base_url: str,
         model: str,
         timeout: int = 300,
-        max_tokens: int = 2048,
-        think: bool = False,
+        max_tokens: int = 4096,
+        think: bool = True,
     ):
         self.base_url = base_url.rstrip("/")
         self.model = model
         self.timeout = timeout
         self.max_tokens = max_tokens
+        # Whether to ask the model to reason. Auto-downgraded (once) to False
+        # if the server says this model can't think, so non-reasoning models
+        # don't pay the retry on every call.
         self.think = think
 
     def describe(self) -> str:
         return f"ollama:{self.model} @ {self.base_url}"
 
+    def _post(self, payload: dict):
+        resp = httpx.post(
+            f"{self.base_url}/api/chat", json=payload, timeout=self.timeout
+        )
+        resp.raise_for_status()
+        return resp.json()
+
     def chat(self, system: str, prompt: str) -> str:
         payload = {
             "model": self.model,
             "stream": False,
-            # Ask reasoning models (Qwen3, R1, …) not to think, so the whole
-            # token budget goes to the answer and no monologue leaks out.
+            # Let the model reason: the ANSWER is conditioned on its
+            # chain-of-thought. Ollama returns the reasoning in a separate
+            # `thinking` field, which we deliberately drop — reasoning is used,
+            # never recorded.
             "think": self.think,
             "options": {"num_predict": self.max_tokens},
             "messages": [
@@ -116,21 +132,19 @@ class OllamaBackend(LLMBackend):
             ],
         }
         try:
-            resp = httpx.post(
-                f"{self.base_url}/api/chat", json=payload, timeout=self.timeout
-            )
-            resp.raise_for_status()
-            data = resp.json()
+            data = self._post(payload)
         except httpx.HTTPStatusError as exc:
-            # Older Ollama builds reject the `think` field; retry without it.
-            if exc.response is not None and exc.response.status_code == 400 and "think" in payload:
-                payload.pop("think", None)
+            # This model doesn't support thinking: downgrade for the rest of
+            # this process and retry once without the flag.
+            if (
+                exc.response is not None
+                and exc.response.status_code == 400
+                and payload.get("think")
+            ):
+                self.think = False
+                payload["think"] = False
                 try:
-                    resp = httpx.post(
-                        f"{self.base_url}/api/chat", json=payload, timeout=self.timeout
-                    )
-                    resp.raise_for_status()
-                    data = resp.json()
+                    data = self._post(payload)
                 except (httpx.HTTPError, ValueError) as exc2:
                     raise LLMError(f"ollama request failed: {exc2}") from exc2
             else:
@@ -141,8 +155,8 @@ class OllamaBackend(LLMBackend):
             content = str(data["message"]["content"])
         except (KeyError, TypeError) as exc:
             raise LLMError(f"unexpected ollama response shape: {data}") from exc
-        # Ollama returns reasoning in a separate `thinking` field (ignored) but
-        # some models still inline <think> tags — strip either way.
+        # `data["message"]["thinking"]` holds the reasoning — intentionally
+        # ignored. Strip any <think> a model inlined into content anyway.
         return strip_thinking(content)
 
 
@@ -151,7 +165,7 @@ class LlamaCppServerBackend(LLMBackend):
 
     name = "llamacpp"
 
-    def __init__(self, base_url: str, timeout: int = 300, max_tokens: int = 2048):
+    def __init__(self, base_url: str, timeout: int = 300, max_tokens: int = 4096):
         self.base_url = base_url.rstrip("/")
         self.timeout = timeout
         self.max_tokens = max_tokens
@@ -188,7 +202,7 @@ class LlamaCppCliBackend(LLMBackend):
 
     name = "llamacpp-cli"
 
-    def __init__(self, binary: str, model_path: str, timeout: int = 300, max_tokens: int = 2048):
+    def __init__(self, binary: str, model_path: str, timeout: int = 300, max_tokens: int = 4096):
         if not model_path:
             raise LLMError("llamacpp-cli backend needs LLAMACPP_MODEL_PATH")
         self.binary = binary
@@ -230,7 +244,7 @@ def build_backend(cfg) -> LLMBackend:
             cfg.ollama_model,
             cfg.llm_timeout_seconds,
             cfg.llm_max_tokens,
-            think=getattr(cfg, "llm_think", False),
+            think=getattr(cfg, "llm_think", True),
         )
     if cfg.llm_backend == "llamacpp":
         return LlamaCppServerBackend(

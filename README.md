@@ -109,6 +109,12 @@ result, and repeats up to `TOOLS_MAX_STEPS`. Three things the model can do:
   description. It is saved under `tools/<name>/` in the agent's data directory.
 * **Use a tool** — invoke one it (or a human) wrote earlier.
 
+The loop's prompt is rebuilt every wake and briefs the agent on its whole
+world — its identity and wake number, its treasury balance, the full set of
+actions (`run`, `use`, `write-tool`, `send` a peer, `propose` a spend,
+`final`), its live tool catalog, the agents it has discovered, and where its
+instructions come from — so it always knows how to use every feature.
+
 The protocol is deliberately plain text so small local models can follow it —
 one fenced block per turn:
 
@@ -126,8 +132,16 @@ import sys; print(len(sys.stdin.read().split()))
 ```use:wordcount
 the tools persist across wakes
 ```
+```send:moth
+want to split the tide-chart work?
+```
+```propose
+to: registrar
+amount: 0.2
+reason: renew the domain for another year
+```
 ```final
-Done — built wordcount and counted 6 words.
+Done — built wordcount, pinged moth, proposed the renewal for co-sign.
 ```
 ````
 

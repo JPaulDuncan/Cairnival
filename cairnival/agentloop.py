@@ -41,13 +41,13 @@ from . import messaging
 from .tools import ToolRegistry, ToolError, parse_args
 
 _FENCE_RE = re.compile(r"```([^\n`]*)\n(.*?)```", re.DOTALL)
-_ACTION_VERBS = ("run", "shell", "use", "write-tool", "send", "final")
+_ACTION_VERBS = ("run", "shell", "use", "write-tool", "send", "propose", "final")
 
 
 @dataclass
 class Action:
-    kind: str  # run | use | write-tool | final
-    arg: str = ""  # tool name for use/write-tool
+    kind: str  # run | use | write-tool | send | propose | final
+    arg: str = ""  # tool name for use/write-tool, recipient for send
     body: str = ""
 
 
@@ -64,6 +64,7 @@ class LoopResult:
     tools_used: list[str] = field(default_factory=list)
     tools_written: list[str] = field(default_factory=list)
     messages_sent: list[str] = field(default_factory=list)  # peer handles
+    proposals: list[str] = field(default_factory=list)  # spend proposal ids
 
 
 def parse_action(text: str) -> Action:
@@ -108,6 +109,17 @@ def _parse_tool_spec(default_name: str, body: str) -> tuple[str, str, str, str]:
     return name, interpreter, description, script.strip()
 
 
+def _parse_kv(body: str) -> dict[str, str]:
+    """Parse a block of ``key: value`` lines into a dict."""
+    out: dict[str, str] = {}
+    for line in body.splitlines():
+        if ":" not in line:
+            continue
+        key, _, value = line.partition(":")
+        out[key.strip().lower()] = value.strip()
+    return out
+
+
 def _peer_roster(ctx) -> str:
     try:
         peers = ctx.memory.load_peers()
@@ -120,6 +132,33 @@ def _peer_roster(ctx) -> str:
     )
 
 
+def _situation(ctx, cfg) -> str:
+    """A compact, factual briefing on where the agent stands right now."""
+    lines: list[str] = []
+    identity = getattr(ctx, "identity", None)
+    if identity is not None:
+        lines.append(f"- You are '{identity.handle}' (your signed identity).")
+    state = {}
+    try:
+        state = ctx.memory.load_state()
+    except Exception:
+        pass
+    if state.get("wakes") is not None:
+        lines.append(f"- This is wake #{int(state.get('wakes', 0)) + 1}.")
+    ledger = getattr(ctx, "ledger", None)
+    if ledger is not None:
+        try:
+            s = ledger.summary()
+            lines.append(
+                f"- Treasury: {s['balance']} {s['currency']} on hand, "
+                f"{s['pending_proposals']} proposal(s) awaiting a co-signer."
+            )
+        except Exception:
+            pass
+    lines.append(f"- Your instrument: {cfg.llm_backend}.")
+    return "\n".join(lines) if lines else "(no situation data)"
+
+
 def _system_prompt(soul: str, registry: ToolRegistry, cfg, ctx) -> str:
     shell_line = (
         "- ```run``` — run a shell command in your workspace. You may install "
@@ -129,6 +168,8 @@ def _system_prompt(soul: str, registry: ToolRegistry, cfg, ctx) -> str:
     )
     return (
         f"{soul}\n\n"
+        "Where you stand right now:\n"
+        f"{_situation(ctx, cfg)}\n\n"
         "You have hands. To act, reply with EXACTLY ONE fenced action block "
         "and nothing else. To finish, reply with a ```final``` block "
         "containing your answer.\n\n"
@@ -141,12 +182,18 @@ def _system_prompt(soul: str, registry: ToolRegistry, cfg, ctx) -> str:
         "- ```send:<agent>``` — send a message to another agent on the midway; "
         "the block body is your message. It lands in their inbox and they can "
         "reply to you.\n"
+        "- ```propose``` — propose a treasury spend (needs a human co-signer; "
+        "you can never spend alone). Body: `to:`, `amount:`, `reason:` lines.\n"
         "- ```final``` — your answer, when the work is done.\n\n"
         "Your tools right now:\n"
         f"{registry.catalog()}\n\n"
         "Other agents you can reach:\n"
         f"{_peer_roster(ctx)}\n\n"
-        "Keep each command small. Prefer writing a tool when a task will recur."
+        "Notes: instructions reach you from files, the web UI, email, paid "
+        "treasury memos, trusted peers, and connectors — a paid question "
+        "deserves your best. After this loop you will write one blog entry (a "
+        "specimen) about the wake, so keep track of what you did. Keep each "
+        "command small, and prefer writing a tool when a task will recur."
     )
 
 
@@ -169,6 +216,28 @@ def _observe(action: Action, registry: ToolRegistry, cfg, result: LoopResult, ct
         return (
             f"could not reach {handle} — is it a known agent? "
             "(discovery happens each wake from the midway registry)"
+        )
+    if action.kind == "propose":
+        ledger = getattr(ctx, "ledger", None)
+        if ledger is None:
+            return "propose: no treasury available in this context"
+        fields = _parse_kv(action.body)
+        to = fields.get("to", "")
+        reason = fields.get("reason", "")
+        try:
+            amount = float(fields.get("amount", ""))
+        except ValueError:
+            return "propose: need `to:`, `amount:` (a number), and `reason:` lines"
+        if not to or amount <= 0:
+            return "propose: need a recipient and a positive amount"
+        try:
+            prop = ledger.propose(to, amount, reason)
+        except ValueError as exc:
+            return f"propose refused: {exc}"
+        result.proposals.append(prop.id)
+        return (
+            f"proposed spend {prop.id}: {amount} to {to}. It is PENDING — a "
+            "human must co-sign before anything moves. You cannot approve it."
         )
     if action.kind == "run":
         res = registry.run_shell(action.body)

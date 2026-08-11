@@ -89,6 +89,8 @@ def _work_instruction(ctx: WakeContext, ins: Instruction) -> dict[str, Any]:
             ctx.note(f"used tool(s): {', '.join(outcome.tools_used)}")
         if outcome.messages_sent:
             ctx.note(f"messaged agent(s): {', '.join(outcome.messages_sent)}")
+        if outcome.proposals:
+            ctx.note(f"proposed spend(s): {', '.join(outcome.proposals)}")
         ctx.note(
             f"worked: {ins.title} [{ins.source}] "
             f"({len(outcome.steps)} action(s))"
@@ -100,6 +102,7 @@ def _work_instruction(ctx: WakeContext, ins: Instruction) -> dict[str, Any]:
             "tools_used": outcome.tools_used,
             "tools_written": outcome.tools_written,
             "messages_sent": outcome.messages_sent,
+            "proposals": outcome.proposals,
             "steps": len(outcome.steps),
         }
 
@@ -180,6 +183,8 @@ def _write_specimen(
         tags.append("tool-use")
     if any(w.get("messages_sent") for w in worked):
         tags.append("correspondence")
+    if any(w.get("proposals") for w in worked):
+        tags.append("treasury")
 
     specimen = Specimen(
         id=next_id(ctx.memory.specimens_dir),

@@ -31,9 +31,18 @@ names the action:
 | ` ```run ` | run the block body as a shell command in the workspace |
 | ` ```use:<tool> ` | run a registered tool; first body line = argv, rest = stdin |
 | ` ```write-tool ` | author a tool (front matter, then `---`, then the script) |
+| ` ```send:<agent> ` | message another agent; it lands in their inbox and they can reply |
+| ` ```propose ` | propose a treasury spend (`to:`/`amount:`/`reason:`); a human co-signs |
 | ` ```final ` | the block body is the answer; the loop ends |
 
 `shell` is accepted as an alias for `run`.
+
+The loop's system prompt is assembled fresh each wake and briefs the agent on
+everything it can do: its situation (handle, wake number, treasury balance,
+instrument), the full action list above, its current tool catalog, the roster
+of agents it has discovered, and where its instructions come from. So an agent
+always knows how to exercise every feature — tools, federation, and the
+treasury — without that knowledge being baked into a particular model.
 
 ## Tool format
 

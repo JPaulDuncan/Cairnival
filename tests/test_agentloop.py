@@ -11,6 +11,7 @@ from cairnival.federation import Identity
 from cairnival.instructions import Instruction
 from cairnival.memory import Memory
 from cairnival.tools import ToolRegistry
+from cairnival.treasury import Ledger
 
 
 class ScriptedLLM:
@@ -35,10 +36,16 @@ def make_ctx(tmp_path, llm):
     memory = Memory(tmp_path, "rustle")
     memory.ensure()
     identity = Identity.load_or_create(memory.keys_dir, "rustle")
+    ledger = Ledger(memory.treasury_dir)
     registry = ToolRegistry(memory.tools_dir, memory.workspace_dir, cfg)
     registry.discover()
     ctx = SimpleNamespace(
-        cfg=cfg, memory=memory, llm=llm, registry=registry, identity=identity
+        cfg=cfg,
+        memory=memory,
+        llm=llm,
+        registry=registry,
+        identity=identity,
+        ledger=ledger,
     )
     return ctx, registry
 
@@ -125,6 +132,38 @@ def test_loop_sends_message_to_peer(tmp_path, monkeypatch):
     assert "moth" in result.messages_sent
     assert calls["to"] == "moth"
     assert "tide charts" in calls["text"]
+
+
+def test_propose_action_creates_pending_spend(tmp_path):
+    llm = ScriptedLLM(
+        [
+            "```propose\nto: registrar\namount: 0.2\nreason: renew the domain\n```",
+            "```final\nProposed the renewal; waiting on a co-signer.\n```",
+        ]
+    )
+    ctx, registry = make_ctx(tmp_path, llm)
+    ctx.ledger.deposit(1.0)  # has funds, but a spend still needs a co-sign
+    ins = Instruction(title="renew", body="renew the domain", source="ui")
+    result = agentloop.solve(ctx, ins, registry)
+    assert result.proposals, "a proposal id should be recorded"
+    pending_props = ctx.ledger.proposals("pending")
+    assert len(pending_props) == 1
+    assert pending_props[0]["to"] == "registrar"
+    assert pending_props[0]["amount"] == 0.2
+    # nothing moved: the agent cannot spend alone
+    assert ctx.ledger.balance() == 1.0
+
+
+def test_system_prompt_briefs_all_capabilities(tmp_path):
+    from cairnival.agentloop import _system_prompt
+
+    ctx, registry = make_ctx(tmp_path, ScriptedLLM([]))
+    ctx.ledger.deposit(0.5)
+    prompt = _system_prompt(ctx.memory.soul(), registry, ctx.cfg, ctx)
+    for token in ("```run", "```use", "```write-tool", "```send", "```propose", "```final"):
+        assert token in prompt, f"{token} missing from the briefing"
+    assert "Treasury:" in prompt  # situation block present
+    assert "rustle" in prompt  # identity named
 
 
 def test_loop_respects_step_limit(tmp_path):

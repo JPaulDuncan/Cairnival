@@ -141,12 +141,26 @@ write.
 ## Running, reading, and editing tools by hand
 
 The attach UI's **Tools** page lists every discovered tool, runs one with
-arguments, and offers a shell box into the same workspace. Click a tool to open
-its page, where you can **read its full source**, **edit** the script and
-description, run it, or delete it. Edits are written straight to
-`tools/<name>/` and take effect on the next wake — so you can review, fix, or
-harden anything an agent writes for itself. Viewing is open; running, editing,
-and deleting are token-gated like every other mutation.
+arguments, and offers a shell box into the same workspace. Each tool has its
+own **sub-surface** at `/tools/<name>` — a full page for that one tool:
+
+* **Overview** — description, interpreter, entry, author, created, and status
+  chips (shared / MCP / surface).
+* **Run** — run it with arguments and see the output **inline on the page**,
+  plus a **recent-runs** history (time, who ran it — you, the agent, or an MCP
+  client — arguments, and exit status). History is kept per tool in
+  `tools/<name>/runs.json`, bounded to the last 25 runs.
+* **Source** — read and edit the full script and description; edits write
+  straight to `tools/<name>/` and take effect on the next wake.
+* **Sharing** — toggle federation sharing; when the tool is served over MCP the
+  page shows the exact `tools/call` signature other clients use.
+* **UI surface** — enable/tune the tool's Surfaces page (title, inputs, output).
+* **Files** — the files that make up the tool, plus the raw manifest.
+* **Danger** — delete the tool and its files.
+
+Viewing is open; running, editing, sharing, and deleting are token-gated like
+every other mutation — so you can review, fix, or harden anything an agent
+writes for itself.
 
 ## Safety
 

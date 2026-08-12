@@ -327,5 +327,5 @@ def call_shared_tool(registry, tool, arguments: dict) -> tuple[bool, str]:
         args = [str(arguments.get(name, "")) for name in tool.ui_inputs]
     else:
         args = parse_args(str(arguments.get("args", "")))
-    result = registry.run_tool(tool.name, args)
+    result = registry.run_tool(tool.name, args, by="mcp")
     return result.ok, result.render(registry.cfg.tools_output_limit)

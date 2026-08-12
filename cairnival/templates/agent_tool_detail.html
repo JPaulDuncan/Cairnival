@@ -9,24 +9,82 @@
   {{ railmod.rail(cfg, "/tools") }}
   <main class="column">
 
-{% if saved %}<p class="ok">Saved. The updated tool is live now and on every future wake.</p>{% endif %}
+  <div class="col-head">
+    <a href="/tools" class="label">← tools</a>
+    <h2 style="margin-left:.6rem">{{ tool.name }}</h2>
+    <span class="label" style="margin-left:auto">
+      {% if tool.shared %}<span class="chip">shared</span>{% endif %}
+      {% if mcp_exposed %}<span class="chip">MCP</span>{% endif %}
+      {% if tool.ui %}<span class="chip">surface</span>{% endif %}
+    </span>
+  </div>
 
-<div class="specimen-label">
-  {{ tool.name }} · {{ tool.interpreter }} · entry {{ tool.entry }} ·
-  by {{ tool.author }}{% if tool.created %} · created {{ tool.created }}{% endif %}
-</div>
+  {% if saved %}<p class="ok">Saved. The updated tool is live now and on every future wake.</p>{% endif %}
 
-<form method="post" action="/tools/{{ tool.name }}/share" style="margin:.5rem 0">
-  <label class="label"><input type="checkbox" name="shared" value="1" style="width:auto"
-    {% if tool.shared %}checked{% endif %} onchange="this.form.submit()">
-    shared with the federation (when sharing policy is “all” or “selected”)</label>
-</form>
+  <p style="margin:.2rem 0">{{ tool.description }}</p>
+  <div class="specimen-label">
+    {{ tool.interpreter }} · entry <code>{{ tool.entry }}</code> ·
+    by {{ tool.author }}{% if tool.created %} · created {{ tool.created }}{% endif %} ·
+    {{ history | length }} recorded run{{ 's' if history | length != 1 else '' }}
+  </div>
 
-<details style="margin:.5rem 0">
-  <summary class="label">UI surface {% if tool.ui %}· <a href="/surface/{{ tool.name }}">open →</a>{% endif %}</summary>
-  <form method="post" action="/tools/{{ tool.name }}/surface" style="margin-top:.5rem">
+  <!-- Run -->
+  <h2>Run</h2>
+  <form method="post" action="/tools/{{ tool.name }}/run">
+    <input name="args" placeholder="arguments (optional)" style="font-family:ui-monospace,monospace">
+    <button>Run now</button>
+  </form>
+  {% if output %}<div class="surface-out"><h3>Output</h3><pre>{{ output }}</pre></div>{% endif %}
+
+  {% if history %}
+  <h3 style="margin-top:1rem">Recent runs</h3>
+  <table>
+    <tr><th>when</th><th>by</th><th>args</th><th>exit</th></tr>
+    {% for r in history %}
+    <tr>
+      <td class="label">{{ r.ts }}</td>
+      <td>{{ r.by }}</td>
+      <td><code>{{ r.args or '—' }}</code></td>
+      <td>{% if r.ok %}<span class="chip">ok</span>{% else %}<span class="chip" style="color:var(--lite1);border-color:var(--lite1)">exit {{ r.exit }}</span>{% endif %}</td>
+    </tr>
+    {% endfor %}
+  </table>
+  {% endif %}
+
+  <!-- Source -->
+  <h2>Source</h2>
+  <form method="post" action="/tools/{{ tool.name }}/save">
+    <label class="label">description</label>
+    <input name="description" value="{{ tool.description }}">
+    <label class="label">script ({{ tool.entry }})</label>
+    <textarea name="source" rows="20" spellcheck="false"
+              style="font-family:ui-monospace,monospace; font-size:.9em; white-space:pre;">{{ source }}</textarea>
+    <button>Save source</button>
+  </form>
+
+  <!-- Sharing -->
+  <h2>Sharing</h2>
+  <form method="post" action="/tools/{{ tool.name }}/share" style="margin:.4rem 0">
+    <label class="label"><input type="checkbox" name="shared" value="1" style="width:auto"
+      {% if tool.shared %}checked{% endif %} onchange="this.form.submit()">
+      shared with the federation (when the sharing policy is “all” or “selected”)</label>
+  </form>
+  {% if mcp_exposed %}
+  <p class="label">Served as MCP — other agents and MCP clients can call it:</p>
+  <pre>POST {{ public_url or '(this agent)' }}/mcp
+{"method":"tools/call","params":{"name":"{{ tool.name }}","arguments":{
+  {%- for f in tool.ui_inputs %}"{{ f }}": "…"{{ ", " if not loop.last }}{% endfor -%}
+  {% if not tool.ui_inputs %}"args": "…"{% endif %}}}}</pre>
+  {% elif tool.shared %}
+  <p class="label">Shared, but MCP is off for this agent — enable it in Settings to serve this tool over MCP.</p>
+  {% endif %}
+
+  <!-- Surface -->
+  <h2>UI surface {% if tool.ui %}· <a href="/surface/{{ tool.name }}">open →</a>{% endif %}</h2>
+  <p class="label">give this tool its own page under Surfaces — a form for its inputs and its output rendered inline</p>
+  <form method="post" action="/tools/{{ tool.name }}/surface">
     <label class="label"><input type="checkbox" name="enabled" value="1" style="width:auto"
-      {% if tool.ui %}checked{% endif %}> give this tool a page under Surfaces</label>
+      {% if tool.ui %}checked{% endif %}> enabled</label>
     <label class="label">title</label>
     <input name="title" value="{{ tool.ui_title }}" placeholder="{{ tool.name }}">
     <label class="label">inputs (comma-separated form fields, passed to the script as arguments in order)</label>
@@ -38,31 +96,29 @@
     </select>
     <p><button class="quiet">Save surface</button></p>
   </form>
-</details>
 
-<h2>Source</h2>
-<form method="post" action="/tools/{{ tool.name }}/save">
-  <label class="label">description</label>
-  <input name="description" value="{{ tool.description }}">
-  <label class="label">script ({{ tool.entry }})</label>
-  <textarea name="source" rows="22" spellcheck="false"
-            style="font-family:ui-monospace,monospace; font-size:.9em; white-space:pre;">{{ source }}</textarea>
-  <button>Save source</button>
-</form>
+  <!-- Files & manifest -->
+  <h2>Files</h2>
+  {% if files %}
+  <table>
+    <tr><th>file</th><th>bytes</th></tr>
+    {% for f in files %}
+    <tr><td><code>{{ f.name }}</code>{% if f.entry %} <span class="chip">entry</span>{% endif %}</td><td class="label">{{ f.size }}</td></tr>
+    {% endfor %}
+  </table>
+  {% endif %}
+  {% if manifest %}
+  <details style="margin-top:.5rem"><summary class="label">manifest (tool.json)</summary>
+    <pre>{{ manifest }}</pre>
+  </details>
+  {% endif %}
 
-<h2>Run it</h2>
-<form method="post" action="/tools/run">
-  <input type="hidden" name="name" value="{{ tool.name }}">
-  <input name="args" placeholder="arguments (optional)">
-  <button class="quiet">Run</button>
-</form>
-{% if output %}<pre>{{ output }}</pre>{% endif %}
-
-<h2>Danger</h2>
-<form method="post" action="/tools/{{ tool.name }}/delete"
-      onsubmit="return confirm('Delete the tool {{ tool.name }}? This removes its files.')">
-  <button class="quiet">Delete this tool</button>
-</form>
+  <!-- Danger -->
+  <h2 style="border-color:var(--lite1); color:var(--lite1)">Danger</h2>
+  <form method="post" action="/tools/{{ tool.name }}/delete"
+        onsubmit="return confirm('Delete the tool {{ tool.name }}? This removes its files.')">
+    <button class="quiet">Delete this tool</button>
+  </form>
 
   </main>
 </div>

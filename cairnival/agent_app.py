@@ -606,12 +606,11 @@ def create_app(cfg: AgentConfig | None = None) -> FastAPI:
         memory = open_memory(c)
         registry = ToolRegistry(memory.tools_dir, memory.workspace_dir, c)
         registry.discover()
-        result = registry.run_tool(name, parse_args(args))
+        result = registry.run_tool(name, parse_args(args), by="you")
         _last_tool_output["text"] = result.render(c.tools_output_limit)
         return _redirect(request, f"/tools?ran={name}")
 
-    @app.get("/tools/{name}", response_class=HTMLResponse)
-    def tool_detail(request: Request, name: str):
+    def _render_tool(request: Request, name: str, *, output: str = "", saved: str = ""):
         c = current()
         memory = open_memory(c)
         registry = ToolRegistry(memory.tools_dir, memory.workspace_dir, c)
@@ -619,6 +618,9 @@ def create_app(cfg: AgentConfig | None = None) -> FastAPI:
         tool = registry.tools.get(name)
         if tool is None:
             raise HTTPException(404, "no such tool")
+        mcp_exposed = bool(
+            c.mcp_enabled and tool in registry.shared_tools(c.tool_sharing)
+        )
         return templates.TemplateResponse(
             request,
             "agent_tool_detail.html",
@@ -626,10 +628,32 @@ def create_app(cfg: AgentConfig | None = None) -> FastAPI:
                 "cfg": c,
                 "tool": tool,
                 "source": registry.source(name) or "",
-                "saved": request.query_params.get("saved", ""),
-                "output": _last_tool_output.get("text", "") if request.query_params.get("ran") else "",
+                "saved": saved or request.query_params.get("saved", ""),
+                "output": output,
+                "history": registry.run_history(name),
+                "files": registry.files(name),
+                "manifest": registry.manifest_text(name),
+                "mcp_exposed": mcp_exposed,
+                "public_url": c.public_url,
             },
         )
+
+    @app.get("/tools/{name}", response_class=HTMLResponse)
+    def tool_detail(request: Request, name: str):
+        return _render_tool(request, name)
+
+    @app.post("/tools/{name}/run", response_class=HTMLResponse)
+    def tool_run_inline(request: Request, name: str, args: str = Form("")):
+        """Run the tool and show its output right here on the tool's page."""
+        check_token(request)
+        c = current()
+        memory = open_memory(c)
+        registry = ToolRegistry(memory.tools_dir, memory.workspace_dir, c)
+        registry.discover()
+        if name not in registry.tools:
+            raise HTTPException(404, "no such tool")
+        result = registry.run_tool(name, parse_args(args), by="you")
+        return _render_tool(request, name, output=result.render(c.tools_output_limit))
 
     @app.post("/tools/{name}/save")
     def tool_save(
@@ -748,7 +772,7 @@ def create_app(cfg: AgentConfig | None = None) -> FastAPI:
         form = await request.form()
         # inputs are passed to the tool as positional args in declared order
         args = [str(form.get(field, "")) for field in tool.ui_inputs]
-        result = registry.run_tool(name, args)
+        result = registry.run_tool(name, args, by="you")
         if tool.ui_output == "html":
             # the tool's own HTML, isolated in a sandboxed frame (no cookies,
             # no reaching the parent page) so a surface can't touch the token

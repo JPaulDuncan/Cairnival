@@ -21,7 +21,7 @@ from __future__ import annotations
 
 import httpx
 
-from .federation import Identity, seal
+from .federation import Envelope, Identity, seal, verify
 from .memory import Memory, utcnow
 
 
@@ -120,3 +120,152 @@ def discover_from_hub(cfg, identity: Identity, memory: Memory) -> list[str]:
             existing["tagline"] = info.get("tagline", existing.get("tagline", ""))
     memory.save_peers(peers)
     return newly
+
+
+def _merge_peer(memory: Memory, self_handle: str, handle: str, info: dict) -> bool:
+    """Fold a learned agent into our directory. Returns True if it was new.
+    Never replaces a key we've already pinned."""
+    if not handle or handle == self_handle or not isinstance(info, dict):
+        return False
+    if memory.is_blacklisted(handle):
+        return False
+    peers = memory.load_peers()
+    new = handle not in peers
+    row = peers.get(handle, {})
+    if not row.get("public_url"):
+        row["public_url"] = str(info.get("public_url", ""))
+    if not row.get("public_key"):
+        row["public_key"] = str(info.get("public_key", ""))
+    row["tagline"] = str(info.get("tagline", row.get("tagline", "")))
+    row.setdefault("discovered", "gossip")
+    row["last_seen"] = utcnow()
+    peers[handle] = row
+    memory.save_peers(peers)
+    return new
+
+
+def gossip_peers(cfg, identity: Identity, memory: Memory) -> list[str]:
+    """Peer exchange: ask each agent we know for *its* directory and fold in
+    agents we didn't know. This is how knowledge of the federation spreads
+    without any central registry — peers of peers become reachable over a few
+    wakes."""
+    if not cfg.gossip_enabled:
+        return []
+    newly: list[str] = []
+    for handle, info in list(memory.load_peers().items()):
+        url = info.get("public_url", "")
+        if not url or memory.is_blacklisted(handle):
+            continue
+        try:
+            resp = httpx.get(f"{url}/api/directory", timeout=10)
+            resp.raise_for_status()
+            directory = resp.json().get("agents", {})
+        except (httpx.HTTPError, ValueError, AttributeError):
+            continue
+        for h, row in directory.items():
+            if _merge_peer(memory, identity.handle, h, row):
+                newly.append(h)
+    return newly
+
+
+def _location_of(memory: Memory, target: str) -> dict | None:
+    target = target.lower()
+    for handle, info in memory.load_peers().items():
+        if handle.lower() == target and info.get("public_url"):
+            return {
+                "handle": handle,
+                "public_url": info["public_url"],
+                "public_key": info.get("public_key", ""),
+                "tagline": info.get("tagline", ""),
+            }
+    return None
+
+
+def resolve_location(
+    cfg,
+    identity: Identity,
+    memory: Memory,
+    target: str,
+    ttl: int,
+    visited: list[str],
+) -> dict | None:
+    """Find where ``target`` lives: check our own directory, else forward the
+    question to peers (who do the same) up to ``ttl`` hops. Returns the target's
+    location dict or None. Learned locations are pinned into our directory.
+
+    This is the query-forwarding the federation runs on: X asks R, R asks W, W
+    knows Y and answers back down the chain."""
+    here = _location_of(memory, target)
+    if here:
+        return here
+    if ttl <= 0:
+        return None
+    visited = visited + [identity.handle.lower()]
+    asked = 0
+    for handle, info in memory.load_peers().items():
+        if asked >= cfg.locate_fanout:
+            break
+        url = info.get("public_url", "")
+        if not url or handle.lower() in visited or memory.is_blacklisted(handle):
+            continue
+        asked += 1
+        env = seal(
+            identity,
+            "locate",
+            {"target": target, "ttl": ttl - 1, "visited": visited},
+        )
+        try:
+            resp = httpx.post(f"{url}/api/locate", json=env.to_dict(), timeout=10)
+            resp.raise_for_status()
+            data = resp.json()
+        except (httpx.HTTPError, ValueError):
+            continue
+        if data.get("found") and isinstance(data.get("location"), dict):
+            loc = data["location"]
+            _merge_peer(
+                memory,
+                identity.handle,
+                loc.get("handle", target),
+                loc,
+            )
+            return loc
+    return None
+
+
+def locate(cfg, identity: Identity, memory: Memory, target: str) -> dict | None:
+    """Kick off a search for ``target`` across the federation."""
+    return resolve_location(
+        cfg, identity, memory, target, cfg.locate_ttl, [identity.handle.lower()]
+    )
+
+
+def fetch_posts(peer_url: str, limit: int = 20) -> list[dict]:
+    try:
+        resp = httpx.get(f"{peer_url}/api/posts", params={"limit": limit}, timeout=10)
+        resp.raise_for_status()
+        posts = resp.json().get("posts", [])
+        return posts if isinstance(posts, list) else []
+    except (httpx.HTTPError, ValueError, AttributeError):
+        return []
+
+
+def gather_feed(cfg, identity: Identity, memory: Memory, own_posts: list[dict]) -> int:
+    """Pull recent posts from every agent we know into our own feed cache, so
+    this node has a Midway-like feed of the agents it follows. Returns the
+    number of posts in the merged feed."""
+    merged: dict[str, dict] = {}
+    for p in own_posts:
+        merged[f"{p.get('agent')}/{p.get('id')}"] = p
+    for handle, info in memory.load_peers().items():
+        url = info.get("public_url", "")
+        if not url or memory.is_blacklisted(handle):
+            continue
+        for p in fetch_posts(url, cfg.feed_peer_limit):
+            key = f"{p.get('agent')}/{p.get('id')}"
+            if key not in merged:
+                merged[key] = p
+    posts = sorted(
+        merged.values(), key=lambda p: p.get("collected", ""), reverse=True
+    )[: max(cfg.feed_peer_limit * 4, 40)]
+    memory.save_feed_cache(posts)
+    return len(posts)

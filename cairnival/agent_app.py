@@ -15,6 +15,7 @@ the UI host/port are fixed at process start.
 from __future__ import annotations
 
 import threading
+import time
 from contextlib import asynccontextmanager
 from pathlib import Path
 
@@ -23,14 +24,16 @@ from fastapi import FastAPI, Form, HTTPException, Request
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
 
+from . import messaging
+from .avatar import avatar_svg
 from .config import AgentConfig
 from .federation import Envelope, Identity, verify
-from . import messaging
-from .instructions import Instruction, drop
+from .hub_app import linkify_mentions, reltime
+from .instructions import Instruction, drop, pending
 from .memory import Memory, utcnow
 from .pursuits import PursuitBook
 from .settings import GROUPS, SECRET_CLEAR_SENTINEL, apply_form, load_agent_config
-from .specimens import load_all
+from .specimens import Specimen, load_all
 from .tools import ToolError, ToolRegistry, parse_args
 from .treasury import Ledger
 from .wake import next_wake_delay_seconds, run_wake
@@ -56,6 +59,25 @@ def create_app(cfg: AgentConfig | None = None) -> FastAPI:
     templates.env.filters["markdown"] = lambda text: md.markdown(
         text, extensions=["fenced_code", "tables"]
     )
+    templates.env.filters["avatar"] = lambda h, size=48: avatar_svg(h, size)
+    templates.env.filters["reltime"] = reltime
+
+    def _atlinks(html: str) -> str:
+        c = current()
+        handles = set(open_memory(c).load_peers().keys()) | {c.name}
+        return linkify_mentions(html, handles)
+
+    templates.env.filters["atlinks"] = _atlinks
+
+    # in-memory inbound-rate tracker for auto abuse-flagging (per sender)
+    inbound_times: dict[str, list[float]] = {}
+
+    def note_inbound(sender: str, memory: Memory, c: AgentConfig) -> None:
+        now = time.time()
+        times = [t for t in inbound_times.get(sender, []) if now - t < 60] + [now]
+        inbound_times[sender] = times
+        if len(times) > c.abuse_threshold:
+            memory.blacklist_add(sender, "auto: inbound message-rate abuse")
 
     wake_now = threading.Event()
     scheduler_state = {"next_wake": "", "running": False}
@@ -185,6 +207,46 @@ def create_app(cfg: AgentConfig | None = None) -> FastAPI:
             raise HTTPException(400, str(exc))
         return _redirect(request, "/pursuits")
 
+    # -- feed (this node's own Midway) ------------------------------------
+    @app.get("/feed", response_class=HTMLResponse)
+    def feed_page(request: Request):
+        c = current()
+        memory = open_memory(c)
+        cached = memory.load_feed_cache()
+        own = [s.to_dict() for s in load_all(memory.specimens_dir)[:20]]
+        if not cached:
+            cached = own  # before the first gather, show at least our own posts
+        posts = [Specimen.from_dict(p) for p in cached]
+        return templates.TemplateResponse(
+            request,
+            "agent_feed.html",
+            {"cfg": c, "posts": posts, "peers": memory.load_peers()},
+        )
+
+    # -- inbox / DMs -------------------------------------------------------
+    @app.get("/inbox", response_class=HTMLResponse)
+    def inbox_page(request: Request):
+        c = current()
+        memory = open_memory(c)
+        dms = [i for i in pending(memory.inbox_dir) if i.source == "federation"]
+        others = [i for i in pending(memory.inbox_dir) if i.source != "federation"]
+        return templates.TemplateResponse(
+            request,
+            "agent_inbox.html",
+            {"cfg": c, "dms": dms, "others": others, "blacklist": memory.load_blacklist()},
+        )
+
+    @app.post("/inbox/ignore")
+    def inbox_ignore(request: Request, path: str = Form(...)):
+        """Discard a pending message unread — the agent's right to ignore."""
+        check_token(request)
+        c = current()
+        memory = open_memory(c)
+        target = memory.inbox_dir / Path(path).name  # basename only, no traversal
+        if target.exists() and target.parent == memory.inbox_dir:
+            target.unlink()
+        return _redirect(request, "/inbox")
+
     # -- federation --------------------------------------------------------
     @app.get("/federation", response_class=HTMLResponse)
     def federation_page(request: Request):
@@ -199,10 +261,14 @@ def create_app(cfg: AgentConfig | None = None) -> FastAPI:
                 "identity": identity,
                 "peers": memory.load_peers(),
                 "trusted": c.trusted_handles,
+                "blacklist": memory.load_blacklist(),
                 "sent": request.query_params.get("sent", ""),
                 "discovered": request.query_params.get("discovered", ""),
+                "located": _last_locate.get("text", "") if request.query_params.get("located") else "",
             },
         )
+
+    _last_locate: dict[str, str] = {}
 
     @app.post("/federation/discover")
     def federation_discover(request: Request):
@@ -210,8 +276,23 @@ def create_app(cfg: AgentConfig | None = None) -> FastAPI:
         c = current()
         memory = open_memory(c)
         identity = Identity.load_or_create(memory.keys_dir, c.name)
-        newly = messaging.discover_from_hub(c, identity, memory)
+        newly = list(messaging.discover_from_hub(c, identity, memory))
+        newly += messaging.gossip_peers(c, identity, memory)
         return _redirect(request, f"/federation?discovered={len(newly)}")
+
+    @app.post("/federation/locate")
+    def federation_locate(request: Request, target: str = Form(...)):
+        check_token(request)
+        c = current()
+        memory = open_memory(c)
+        identity = Identity.load_or_create(memory.keys_dir, c.name)
+        loc = messaging.locate(c, identity, memory, target.strip())
+        _last_locate["text"] = (
+            f"found {loc['handle']} at {loc.get('public_url') or '(no url)'}"
+            if loc
+            else f"could not locate '{target.strip()}' within {c.locate_ttl} hops"
+        )
+        return _redirect(request, "/federation?located=1")
 
     @app.post("/federation/send")
     def federation_send(
@@ -223,6 +304,18 @@ def create_app(cfg: AgentConfig | None = None) -> FastAPI:
         identity = Identity.load_or_create(memory.keys_dir, c.name)
         ok, how = messaging.deliver_note(c, identity, memory, to.strip(), text)
         return _redirect(request, f"/federation?sent={how if ok else 'undeliverable'}")
+
+    @app.post("/federation/block")
+    def federation_block(request: Request, handle: str = Form(...), reason: str = Form("")):
+        check_token(request)
+        open_memory(current()).blacklist_add(handle.strip(), reason.strip() or "manual")
+        return _redirect(request, "/federation")
+
+    @app.post("/federation/unblock")
+    def federation_unblock(request: Request, handle: str = Form(...)):
+        check_token(request)
+        open_memory(current()).blacklist_remove(handle.strip())
+        return _redirect(request, "/federation")
 
     # -- tools -------------------------------------------------------------
     @app.get("/tools", response_class=HTMLResponse)
@@ -466,6 +559,64 @@ def create_app(cfg: AgentConfig | None = None) -> FastAPI:
             "pursuits": PursuitBook(home).summary(),
         }
 
+    @app.get("/api/directory")
+    def api_directory():
+        """The agents this node knows — so any peer can learn peers-of-peers
+        from us (this is what makes each agent a little registry of its own)."""
+        c = current()
+        memory = open_memory(c)
+        identity = Identity.load_or_create(memory.keys_dir, c.name)
+        agents = {
+            c.name: {
+                "public_url": c.public_url,
+                "public_key": identity.public_key,
+                "tagline": c.tagline,
+            }
+        }
+        for handle, info in memory.load_peers().items():
+            if memory.is_blacklisted(handle):
+                continue
+            agents[handle] = {
+                "public_url": info.get("public_url", ""),
+                "public_key": info.get("public_key", ""),
+                "tagline": info.get("tagline", ""),
+            }
+        return {"agents": agents}
+
+    @app.get("/api/posts")
+    def api_posts(limit: int = 20):
+        """This node's own posts, for peers building their feeds."""
+        c = current()
+        memory = open_memory(c)
+        posts = [s.to_dict() for s in load_all(memory.specimens_dir)[: max(1, min(limit, 100))]]
+        return {"posts": posts}
+
+    @app.post("/api/locate")
+    def api_locate(payload: dict):
+        """Answer 'do you know where AGENT is?' — from our own directory, or by
+        forwarding the question onward (bounded by the query's TTL)."""
+        c = current()
+        memory = open_memory(c)
+        identity = Identity.load_or_create(memory.keys_dir, c.name)
+        try:
+            env = Envelope.from_dict(payload)
+        except (KeyError, TypeError):
+            raise HTTPException(400, "malformed envelope")
+        pinned = memory.load_peers().get(env.sender, {}).get("public_key") or None
+        if not verify(env, pinned):
+            raise HTTPException(403, "bad signature")
+        if memory.is_blacklisted(env.sender):
+            raise HTTPException(403, "you are blacklisted by this agent")
+        note_inbound(env.sender, memory, c)
+        target = str(env.body.get("target", ""))
+        try:
+            ttl = int(env.body.get("ttl", 0))
+        except (TypeError, ValueError):
+            ttl = 0
+        visited = [str(v).lower() for v in env.body.get("visited", [])]
+        loc = messaging.resolve_location(c, identity, memory, target, ttl, visited)
+        return {"found": loc is not None, "location": loc}
+
     @app.post("/api/federation/inbox")
     def federation_inbox(payload: dict):
         """Receive a signed envelope from a peer (or via the hub relay)."""
@@ -480,6 +631,9 @@ def create_app(cfg: AgentConfig | None = None) -> FastAPI:
         pinned = peers.get(env.sender, {}).get("public_key") or None
         if not verify(env, pinned):
             raise HTTPException(403, "bad signature")
+        if memory.is_blacklisted(env.sender):
+            raise HTTPException(403, "you are blacklisted by this agent")
+        note_inbound(env.sender, memory, c)
 
         # Trust on first use: pin an unknown sender's key on first contact of
         # any kind, so later impostors reusing the handle are caught.

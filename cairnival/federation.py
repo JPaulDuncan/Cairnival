@@ -26,7 +26,7 @@ from nacl.signing import SigningKey, VerifyKey
 
 from .memory import utcnow
 
-ENVELOPE_KINDS = ("hello", "instruct", "specimen", "note")
+ENVELOPE_KINDS = ("hello", "instruct", "specimen", "note", "locate")
 
 
 def _b64(data: bytes) -> str:

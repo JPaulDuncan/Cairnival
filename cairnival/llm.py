@@ -5,6 +5,8 @@ The agent thinks with whatever is on the machine:
     ollama        Ollama's native chat API           (HTTP)
     llamacpp      llama.cpp `llama-server`, OpenAI-compatible /v1/chat/completions
     llamacpp-cli  llama.cpp `llama-cli` invoked as a subprocess
+    claude-cli    the Claude Code CLI (`claude -p`), a full coding agent
+    codex-cli     the Codex CLI (`codex exec`), a full coding agent
     echo          deterministic stub for development and tests
 
 All backends implement ``chat(system, prompt) -> str``.
@@ -35,6 +37,7 @@ its next action and is discarded once the action is extracted.
 
 from __future__ import annotations
 
+import os
 import re
 import subprocess
 
@@ -251,6 +254,63 @@ class LlamaCppCliBackend(LLMBackend):
         return strip_thinking(proc.stdout)
 
 
+class CliAgentBackend(LLMBackend):
+    """Drive a coding-agent CLI (Claude Code or Codex) in one-shot print mode.
+
+    These aren't just text models — the CLI can read files, run tools, and act
+    in the agent's workspace on its own. We hand it the prompt and take its
+    final printed answer; any reasoning it prints is stripped like everywhere
+    else.
+    """
+
+    def __init__(
+        self,
+        name: str,
+        argv: list[str],
+        use_stdin: bool,
+        cwd: str = "",
+        timeout: int = 300,
+        extra: str = "",
+    ):
+        self.name = name
+        self._argv = argv
+        self.use_stdin = use_stdin
+        self.cwd = cwd
+        self.timeout = timeout
+        self.extra = extra
+
+    def describe(self) -> str:
+        return self.name
+
+    def chat(self, system: str, prompt: str, think: bool | None = None) -> str:
+        full = f"{system.strip()}\n\n{prompt.strip()}\n"
+        argv = list(self._argv)
+        if self.extra:
+            argv += self.extra.split()
+        stdin = ""
+        if self.use_stdin:
+            stdin = full
+        else:
+            argv = [a.replace("{prompt}", full) for a in argv]
+        workdir = self.cwd if self.cwd and os.path.isdir(self.cwd) else None
+        try:
+            proc = subprocess.run(
+                argv,
+                input=stdin if self.use_stdin else None,
+                capture_output=True,
+                text=True,
+                timeout=self.timeout,
+                cwd=workdir,
+            )
+        except (subprocess.TimeoutExpired, OSError) as exc:
+            raise LLMError(f"{self.name} invocation failed: {exc}") from exc
+        if proc.returncode != 0:
+            raise LLMError(
+                f"{self.name} exited {proc.returncode}: {proc.stderr.strip()[:500]}"
+            )
+        return strip_thinking(proc.stdout)
+
+
 def build_backend(cfg) -> LLMBackend:
     """Construct the backend named by AgentConfig.llm_backend."""
     if cfg.llm_backend == "ollama":
@@ -271,5 +331,25 @@ def build_backend(cfg) -> LLMBackend:
             cfg.llamacpp_model_path,
             cfg.llm_timeout_seconds,
             cfg.llm_max_tokens,
+        )
+    if cfg.llm_backend == "claude-cli":
+        # `claude -p` reads the prompt on stdin and prints the reply.
+        return CliAgentBackend(
+            "claude-cli",
+            [cfg.claude_bin, "-p"],
+            use_stdin=True,
+            cwd=str(getattr(cfg, "home", "") or ""),
+            timeout=cfg.llm_timeout_seconds,
+            extra=cfg.cli_extra_args,
+        )
+    if cfg.llm_backend == "codex-cli":
+        # `codex exec <prompt>` runs non-interactively and prints the result.
+        return CliAgentBackend(
+            "codex-cli",
+            [cfg.codex_bin, "exec", "{prompt}"],
+            use_stdin=False,
+            cwd=str(getattr(cfg, "home", "") or ""),
+            timeout=cfg.llm_timeout_seconds,
+            extra=cfg.cli_extra_args,
         )
     return EchoBackend()

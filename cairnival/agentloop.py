@@ -43,7 +43,7 @@ from .tools import ToolRegistry, ToolError, parse_args
 _FENCE_RE = re.compile(r"```([^\n`]*)\n(.*?)```", re.DOTALL)
 _ACTION_VERBS = (
     "run", "shell", "use", "write-tool", "send", "propose", "remember",
-    "pursue", "final",
+    "pursue", "locate", "final",
 )
 
 
@@ -143,6 +143,8 @@ def _describe(action: Action) -> str:
         return f"wrote tool {fields.get('name', action.arg or 'tool')}"
     if action.kind == "send":
         return f"messaged {action.arg}"
+    if action.kind == "locate":
+        return f"located {action.arg or action.body.strip()[:40]}"
     if action.kind == "propose":
         fields = _parse_kv(action.body)
         return f"proposed spend of {fields.get('amount', '?')} to {fields.get('to', '?')}"
@@ -248,6 +250,9 @@ def _system_prompt(soul: str, registry: ToolRegistry, cfg, ctx) -> str:
         "- ```send:<agent>``` — send a message to another agent on the midway; "
         "the block body is your message. It lands in their inbox and they can "
         "reply to you.\n"
+        "- ```locate:<agent>``` — find an agent you don't know yet by asking "
+        "the agents you do know (who ask the agents they know). If found, it is "
+        "added to your directory so you can ```send``` to it.\n"
         "- ```propose``` — propose a treasury spend (needs a human co-signer; "
         "you can never spend alone). Body: `to:`, `amount:`, `reason:` lines.\n"
         + (
@@ -281,6 +286,20 @@ def _system_prompt(soul: str, registry: ToolRegistry, cfg, ctx) -> str:
 def _observe(action: Action, registry: ToolRegistry, cfg, result: LoopResult, ctx) -> str:
     """Execute one action, returning the observation text."""
     limit = cfg.tools_output_limit
+    if action.kind == "locate":
+        target = (action.arg or action.body).strip().split()[0] if (action.arg or action.body).strip() else ""
+        if not target:
+            return "locate: name the agent like ```locate:handle```"
+        identity = getattr(ctx, "identity", None)
+        if identity is None:
+            return "locate: no identity available in this context"
+        loc = messaging.locate(cfg, identity, ctx.memory, target)
+        if loc:
+            return (
+                f"located {loc['handle']} at {loc.get('public_url') or '(no url)'}. "
+                f"It is now in your directory — reach it with ```send:{loc['handle']}```."
+            )
+        return f"could not find '{target}' within {cfg.locate_ttl} hops of the agents you know"
     if action.kind == "send":
         handle = action.arg.strip()
         if not handle:

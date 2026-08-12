@@ -37,15 +37,37 @@ from .memory import utcnow
 STARTING_BALANCE = 1000
 
 # Order lifecycle. An order is stored by BOTH parties, each from its own role.
-STATES = ("offered", "accepted", "submitted", "completed", "declined", "cancelled", "expired")
-OPEN_STATES = ("offered", "accepted", "submitted")
+#   offered  — posted (directed to a doer, or open on the board for bids)
+#   bid      — (doer's copy) this agent has bid on an open job, awaiting award
+#   accepted — a doer is engaged; coins escrowed
+#   submitted— the deliverable is in, awaiting the asker's review
+#   completed— released and paid
+#   declined/cancelled/expired — closed without payment
+STATES = ("offered", "bid", "accepted", "submitted", "completed", "declined", "cancelled", "expired")
+OPEN_STATES = ("offered", "bid", "accepted", "submitted")
+
+# Kanban columns and the states that fall in each (from either role's view).
+KANBAN = [
+    ("open", "Open", ("offered",)),
+    ("in_progress", "In progress", ("bid", "accepted")),
+    ("review", "Review", ("submitted",)),
+    ("done", "Done", ("completed",)),
+    ("closed", "Closed", ("declined", "cancelled", "expired")),
+]
+
+
+def kanban_column(state: str) -> str:
+    for key, _label, states in KANBAN:
+        if state in states:
+            return key
+    return "open"
 
 
 @dataclass
 class WorkOrder:
     id: str
     asker: str
-    doer: str
+    doer: str  # "" while a job is open on the board (no doer awarded yet)
     coins: int
     criteria: str
     title: str = ""
@@ -63,6 +85,16 @@ class WorkOrder:
     # ratings exchanged for this order
     rating_given: int = 0    # stars this agent gave the counterparty (0 = none yet)
     rating_received: int = 0
+    # job-board fields
+    bids: list = field(default_factory=list)      # [{from, note, price, ts}] — on the asker's copy
+    progress: list = field(default_factory=list)  # [{ts, by, note}] — the kanban activity trail
+
+    @property
+    def is_open(self) -> bool:
+        return self.state == "offered" and not self.doer
+
+    def column(self) -> str:
+        return kanban_column(self.state)
 
     def counterparty(self) -> str:
         return self.doer if self.role == "asker" else self.asker
@@ -76,6 +108,8 @@ class WorkOrder:
         known["coins"] = int(known.get("coins", 0) or 0)
         known["rating_given"] = int(known.get("rating_given", 0) or 0)
         known["rating_received"] = int(known.get("rating_received", 0) or 0)
+        known["bids"] = list(known.get("bids", []) or [])
+        known["progress"] = list(known.get("progress", []) or [])
         return cls(**known)
 
 
@@ -230,12 +264,19 @@ class EconomyBook:
             "open_orders": len([o for o in self.orders() if o.state in OPEN_STATES]),
         }
 
+    def board(self) -> list[WorkOrder]:
+        """My OPEN jobs — posted with no doer yet, waiting for bids. This is
+        what other agents browse at /api/board."""
+        return [o for o in self.orders() if o.role == "asker" and o.is_open]
+
     # -- asker side --------------------------------------------------------
-    def create_offer(self, doer: str, coins: int, criteria: str, title: str = "", deadline: str = "") -> WorkOrder:
+    def create_offer(self, doer: str = "", coins: int = 0, criteria: str = "", title: str = "", deadline: str = "") -> WorkOrder:
+        """Post a work order. With ``doer`` set it is a directed offer; without,
+        it is an OPEN job on the board that any agent can bid on."""
         coins = int(coins)
         if coins <= 0:
             raise EconomyError("a bounty must be a positive number of coins")
-        if doer == self.handle:
+        if doer and doer == self.handle:
             raise EconomyError("you can't hire yourself")
         if coins > self.available():
             raise EconomyError(f"not enough coins: {coins} > {self.available()} available")
@@ -245,7 +286,53 @@ class EconomyBook:
             role="asker", state="offered", deadline=deadline,
         )
         self._put(order)
-        self._log("offer", -coins, order.id, f"bounty to {doer} (reserved)")
+        self._log("offer", -coins, order.id, f"bounty to {doer or 'the board'} (reserved)")
+        return order
+
+    def add_bid(self, order_id: str, from_handle: str, note: str = "", price: int = 0) -> WorkOrder:
+        """Record a bid on one of my open jobs (asker side)."""
+        order = self.get(order_id)
+        if order is None or order.role != "asker":
+            raise EconomyError("no such job")
+        if not order.is_open:
+            raise EconomyError("that job is no longer open for bids")
+        if from_handle == self.handle:
+            raise EconomyError("you can't bid on your own job")
+        order.bids = [b for b in order.bids if b.get("from") != from_handle]  # one bid per agent
+        order.bids.append({
+            "from": from_handle, "note": note.strip(),
+            "price": int(price) or order.coins, "ts": utcnow(),
+        })
+        self._put(order)
+        return order
+
+    def award(self, order_id: str, doer: str) -> WorkOrder:
+        """Award an open job to a bidder: set the doer and debit escrow. This is
+        the asker's key moment — coins leave the spendable purse."""
+        order = self.get(order_id)
+        if order is None or order.role != "asker":
+            raise EconomyError("no such job")
+        if order.state != "offered":
+            raise EconomyError(f"job is {order.state}, not open")
+        if order.coins > self.balance():
+            raise EconomyError("insufficient balance to fund escrow")
+        purse = self._purse()
+        purse["balance"] = int(purse["balance"]) - order.coins
+        self._save(self._purse_path, purse)
+        order.doer = doer
+        order.state = "accepted"
+        order.accepted_at = utcnow()
+        self._put(order)
+        self._log("escrow", -order.coins, order.id, f"awarded to {doer}, escrowed")
+        return order
+
+    def add_progress(self, order_id: str, by: str, note: str) -> WorkOrder:
+        """Append a progress update to an order's activity trail (either side)."""
+        order = self.get(order_id)
+        if order is None:
+            raise EconomyError("no such order")
+        order.progress.append({"ts": utcnow(), "by": by, "note": note.strip()})
+        self._put(order)
         return order
 
     def record_acceptance(self, order_id: str, accept_sig: str) -> WorkOrder:
@@ -322,6 +409,34 @@ class EconomyBook:
         order.state = "offered"
         self._put(order)
         return order
+
+    def place_bid(self, order: WorkOrder, note: str = "", price: int = 0) -> WorkOrder:
+        """Record locally that I've bid on an open job (doer side). It sits in
+        'bid' until the asker awards it (or it lapses)."""
+        existing = self.get(order.id)
+        wo = existing or order
+        wo.role = "doer"
+        wo.state = "bid"
+        wo.progress = wo.progress or []
+        self._put(wo)
+        self._log("bid", 0, wo.id, f"bid on {wo.asker}'s job ({price or wo.coins} coins)")
+        return wo
+
+    def record_award(self, order: WorkOrder) -> WorkOrder:
+        """The asker awarded me the job — engage (doer side). Works whether or
+        not I had a local bid record."""
+        existing = self.get(order.id)
+        wo = existing or order
+        wo.role = "doer"
+        wo.doer = self.handle
+        wo.coins = wo.coins or order.coins
+        wo.criteria = wo.criteria or order.criteria
+        wo.title = wo.title or order.title
+        wo.state = "accepted"
+        wo.accepted_at = utcnow()
+        self._put(wo)
+        self._log("awarded", 0, wo.id, f"awarded {wo.coins}-coin job by {wo.asker}")
+        return wo
 
     def accept(self, order_id: str) -> WorkOrder:
         order = self.get(order_id)

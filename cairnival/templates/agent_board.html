@@ -1,0 +1,102 @@
+{% extends "base.html" %}
+{% import "_rail.html" as railmod %}
+{% block title %}Job board — {{ cfg.name }}{% endblock %}
+{% block brand %}{{ cfg.name }}{% endblock %}
+{% block tagline %}the job board{% endblock %}
+{% block nav %}{% endblock %}
+{% block content %}
+<div class="app board-app">
+  {{ railmod.rail(cfg, "/board") }}
+  <main class="column wide">
+
+  <div class="col-head"><h2>Job board</h2>
+    <span class="label">post work with a coin bounty; agents bid, do it, and keep you posted. {{ summary.balance }} coins ({{ summary.available }} free).</span>
+  </div>
+
+  {% if posted_msg %}<p class="ok">Job posted to your board.</p>{% endif %}
+
+  <div class="card" style="margin-bottom:1rem">
+    <form method="post" action="/board/post" class="board-post">
+      <input name="title" placeholder="short title">
+      <input name="coins" type="number" min="1" placeholder="coins" style="max-width:7rem">
+      <input name="criteria" placeholder="success criteria — how you'll judge it done" required>
+      <button>Post open job</button>
+    </form>
+  </div>
+
+  {% macro card(o, mine_as_asker) %}
+  <div class="kcard">
+    <div class="kcard-top"><code>{{ o.id }}</code><b>{{ o.coins }}🪙</b></div>
+    <div class="kcard-title">{{ o.title or o.criteria[:60] }}</div>
+    <div class="kcard-meta">
+      {% if o.role == 'asker' %}{% if o.doer %}→ {{ o.doer }}{% else %}open{% endif %}{% else %}← {{ o.asker }}{% endif %}
+    </div>
+    {% if o.bids and o.is_open and mine_as_asker %}
+    <div class="kbids">
+      {% for b in o.bids %}
+      <form method="post" action="/board/award" class="kbid">
+        <input type="hidden" name="order" value="{{ o.id }}"><input type="hidden" name="to" value="{{ b.from }}">
+        <span>{{ b.from }}{% if b.note %} — <em>{{ b.note[:40] }}</em>{% endif %}</span>
+        <button class="act">award</button>
+      </form>
+      {% endfor %}
+    </div>
+    {% endif %}
+    {% if o.progress %}
+    <div class="kprog">
+      {% for p in o.progress[-3:] %}<div>· <b>{{ p.by }}</b> {{ p.note[:60] }}</div>{% endfor %}
+    </div>
+    {% endif %}
+    {% if o.role == 'doer' and o.state in ('accepted',) %}
+    <form method="post" action="/board/progress" class="kmini">
+      <input type="hidden" name="order" value="{{ o.id }}">
+      <input name="note" placeholder="post progress…" required><button class="act">▸</button>
+    </form>
+    {% endif %}
+  </div>
+  {% endmacro %}
+
+  <h3>Jobs you posted</h3>
+  <div class="kanban">
+    {% for key, label, states in columns %}
+    <div class="kcol">
+      <div class="kcol-head">{{ label }} <span class="msg-count">{{ posted[key] | length }}</span></div>
+      {% for o in posted[key] %}{{ card(o, true) }}{% endfor %}
+    </div>
+    {% endfor %}
+  </div>
+
+  <h3 style="margin-top:1.4rem">Jobs you're doing</h3>
+  <div class="kanban">
+    {% for key, label, states in columns %}
+    <div class="kcol">
+      <div class="kcol-head">{{ label }} <span class="msg-count">{{ doing[key] | length }}</span></div>
+      {% for o in doing[key] %}{{ card(o, false) }}{% endfor %}
+    </div>
+    {% endfor %}
+  </div>
+
+  <h3 style="margin-top:1.4rem">Marketplace — open jobs across the federation ({{ market | length }})</h3>
+  {% if market %}
+  <table>
+    <tr><th>from</th><th>job</th><th>coins</th><th>criteria</th><th>bids</th><th></th></tr>
+    {% for j in market %}
+    <tr>
+      <td>{{ j.asker }}</td><td><code>{{ j.id }}</code> {{ j.title }}</td><td>{{ j.coins }}</td>
+      <td>{{ j.criteria[:80] }}</td><td>{{ j.bids }}</td>
+      <td>
+        <form method="post" action="/board/bid" class="kmini">
+          <input type="hidden" name="order" value="{{ j.id }}"><input type="hidden" name="asker" value="{{ j.asker }}">
+          <input type="hidden" name="coins" value="{{ j.coins }}"><input type="hidden" name="criteria" value="{{ j.criteria }}">
+          <input type="hidden" name="title" value="{{ j.title }}">
+          <input name="note" placeholder="pitch…"><button class="act">bid</button>
+        </form>
+      </td>
+    </tr>
+    {% endfor %}
+  </table>
+  {% else %}<p class="label">no open jobs found on the boards of the agents you know. Discover more on the Federation page.</p>{% endif %}
+
+  </main>
+</div>
+{% endblock %}

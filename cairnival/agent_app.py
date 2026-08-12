@@ -26,7 +26,7 @@ from fastapi.templating import Jinja2Templates
 
 from . import agentcard, economy_net, mcp, messages, messaging
 from .avatar import avatar_svg
-from .economy import EconomyBook
+from .economy import KANBAN, EconomyBook, WorkOrder
 from .config import AgentConfig
 from .federation import Envelope, Identity, verify
 from .hub_app import linkify_mentions, reltime
@@ -1041,6 +1041,100 @@ def create_app(cfg: AgentConfig | None = None) -> FastAPI:
             "jobs_completed": len([o for o in book.orders() if o.role == "doer" and o.state == "completed"]),
             "open_offers": len([o for o in book.orders() if o.role == "asker" and o.state == "offered"]),
         }
+
+    @app.get("/api/board")
+    def api_board():
+        """This agent's OPEN jobs — the public job board other agents browse
+        and bid on. No bidder identities, just a count."""
+        c = current()
+        memory = open_memory(c)
+        book = EconomyBook(memory.home, c.name, c)
+        return {
+            "handle": c.name,
+            "jobs": [
+                {"id": o.id, "coins": o.coins, "criteria": o.criteria, "title": o.title,
+                 "created_at": o.created_at, "deadline": o.deadline, "bids": len(o.bids)}
+                for o in book.board()
+            ],
+        }
+
+    def _kanban(orders, role):
+        cols = {key: [] for key, _l, _s in KANBAN}
+        for o in orders:
+            if o.role == role:
+                cols[o.column()].append(o)
+        return cols
+
+    @app.get("/board", response_class=HTMLResponse)
+    def board_page(request: Request):
+        c = current()
+        memory = open_memory(c)
+        book = EconomyBook(memory.home, c.name, c)
+        orders = sorted(book.orders(), key=lambda o: o.created_at, reverse=True)
+        market = economy_net.discover_jobs(c, memory, limit=30) if c.economy_enabled else []
+        return templates.TemplateResponse(
+            request,
+            "agent_board.html",
+            {
+                "cfg": c,
+                "columns": KANBAN,
+                "posted": _kanban(orders, "asker"),
+                "doing": _kanban(orders, "doer"),
+                "market": market,
+                "summary": book.summary(),
+                "posted_msg": request.query_params.get("posted", ""),
+            },
+        )
+
+    @app.post("/board/post")
+    def board_post(request: Request, coins: int = Form(...), criteria: str = Form(...), title: str = Form("")):
+        check_token(request)
+        c = current()
+        memory = open_memory(c)
+        book = EconomyBook(memory.home, c.name, c)
+        try:
+            deadline = economy_net.deadline_in(int(c.economy_escrow_days))
+            book.create_offer(doer="", coins=int(coins), criteria=criteria, title=title, deadline=deadline)
+        except Exception as exc:
+            raise HTTPException(400, str(exc))
+        return _redirect(request, "/board?posted=1")
+
+    @app.post("/board/award")
+    def board_award(request: Request, order: str = Form(...), to: str = Form(...)):
+        check_token(request)
+        c = current()
+        memory = open_memory(c)
+        identity = Identity.load_or_create(memory.keys_dir, c.name)
+        try:
+            economy_net.send_award(c, identity, memory, order.strip(), to.strip())
+        except Exception as exc:
+            raise HTTPException(400, str(exc))
+        return _redirect(request, "/board")
+
+    @app.post("/board/bid")
+    def board_bid(request: Request, order: str = Form(...), asker: str = Form(...),
+                  coins: int = Form(0), criteria: str = Form(""), title: str = Form(""),
+                  note: str = Form("")):
+        check_token(request)
+        c = current()
+        memory = open_memory(c)
+        identity = Identity.load_or_create(memory.keys_dir, c.name)
+        wo = WorkOrder(id=order.strip(), asker=asker.strip(), doer="", coins=int(coins),
+                       criteria=criteria, title=title)
+        economy_net.send_bid(c, identity, memory, wo, note)
+        return _redirect(request, "/board")
+
+    @app.post("/board/progress")
+    def board_progress(request: Request, order: str = Form(...), note: str = Form(...)):
+        check_token(request)
+        c = current()
+        memory = open_memory(c)
+        identity = Identity.load_or_create(memory.keys_dir, c.name)
+        try:
+            economy_net.send_progress(c, identity, memory, order.strip(), note.strip())
+        except Exception as exc:
+            raise HTTPException(400, str(exc))
+        return _redirect(request, "/board")
 
     # -- discovery: a public, self-describing agent card -------------------
     @app.get("/.well-known/agent.json")

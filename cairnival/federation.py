@@ -32,6 +32,8 @@ ENVELOPE_KINDS = (
     # the coin economy — a signed work-order market with 2-of-2 escrow
     "work_offer", "work_accept", "work_decline", "work_submit",
     "work_release", "work_rate",
+    # the job board — open jobs, bids, awards, and progress updates
+    "work_bid", "work_award", "work_progress",
 )
 
 

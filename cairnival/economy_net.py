@@ -124,6 +124,60 @@ def send_rate(cfg, identity: Identity, memory: Memory, order_id: str, stars: int
     return deliver(cfg, memory, order.counterparty(), env)
 
 
+# --- the job board: bid / award / progress --------------------------------
+
+def send_bid(cfg, identity: Identity, memory: Memory, order: WorkOrder, note: str = "", price: int = 0) -> tuple[bool, str]:
+    """Bid on another agent's open job (doer side). ``order`` carries the fields
+    discovered from that agent's board."""
+    book = book_for(cfg, memory)
+    book.place_bid(order, note, price)
+    env = seal(identity, "work_bid", {"order": order.id, "note": note, "price": int(price)})
+    return deliver(cfg, memory, order.asker, env)
+
+
+def send_award(cfg, identity: Identity, memory: Memory, order_id: str, doer: str) -> tuple[bool, str]:
+    """Award your open job to a bidder (asker side): escrow is debited now."""
+    book = book_for(cfg, memory)
+    order = book.award(order_id, doer)
+    env = seal(identity, "work_award", _contract(order))  # asker's sig engages the doer
+    return deliver(cfg, memory, doer, env)
+
+
+def send_progress(cfg, identity: Identity, memory: Memory, order_id: str, note: str) -> tuple[bool, str]:
+    """Post a progress update; the counterparty's kanban card advances."""
+    book = book_for(cfg, memory)
+    order = book.add_progress(order_id, cfg.name, note)
+    env = seal(identity, "work_progress", {"order": order_id, "note": note})
+    return deliver(cfg, memory, order.counterparty(), env)
+
+
+def fetch_board(url: str, timeout: int = 8) -> list[dict]:
+    """Read an agent's open jobs from its /api/board."""
+    try:
+        resp = httpx.get(f"{url.rstrip('/')}/api/board", timeout=timeout)
+        resp.raise_for_status()
+        return list(resp.json().get("jobs", []))
+    except (httpx.HTTPError, ValueError):
+        return []
+
+
+def discover_jobs(cfg, memory: Memory, limit: int = 20) -> list[dict]:
+    """Search the boards of the agents this node knows for open jobs to bid on.
+    Skips your own jobs and blacklisted agents."""
+    out: list[dict] = []
+    for handle, info in memory.load_peers().items():
+        url = info.get("public_url", "")
+        if not url or handle == cfg.name or memory.is_blacklisted(handle):
+            continue
+        for job in fetch_board(url):
+            job["asker"] = handle
+            job["asker_url"] = url
+            out.append(job)
+            if len(out) >= limit:
+                return out
+    return out
+
+
 # --- inbound dispatch ------------------------------------------------------
 
 def handle_work_envelope(cfg, memory: Memory, env: Envelope) -> Instruction | None:
@@ -189,6 +243,35 @@ def handle_work_envelope(cfg, memory: Memory, env: Envelope) -> Instruction | No
             stars = int(body.get("stars", 0) or 0)
             book.record_rating_received(sender, oid, stars, str(body.get("note", "")))
             return note(f"⭐ {sender} rated your work on {oid}: {stars}/5")
+        if kind == "work_bid":
+            oid = str(body.get("order", ""))
+            bnote = str(body.get("note", ""))
+            order = book.add_bid(oid, sender, bnote, int(body.get("price", 0) or 0))
+            return note(
+                f"🙋 {sender} bid on your job {order.id} ({len(order.bids)} bid(s) now)",
+                (f"Their pitch: {bnote}\n" if bnote else "")
+                + f"Award it with ```award:{order.id}``` (body `to: {sender}`).",
+            )
+        if kind == "work_award":
+            order = WorkOrder(
+                id=str(body.get("order", "")), asker=str(body.get("asker", sender)),
+                doer=cfg.name, coins=int(body.get("coins", 0) or 0),
+                criteria=str(body.get("criteria", "")), title=str(body.get("title", "")),
+                deadline=str(body.get("deadline", "")),
+            )
+            if not order.id:
+                return note(f"economy: malformed award from {sender}")
+            book.record_award(order)
+            return note(
+                f"🏆 {sender} awarded you {order.id} — {order.coins} coins",
+                f"Task: {order.criteria}\nDo it, post updates with ```progress:{order.id}```, "
+                f"then ```submit:{order.id}```.",
+            )
+        if kind == "work_progress":
+            oid = str(body.get("order", ""))
+            pnote = str(body.get("note", ""))
+            book.add_progress(oid, sender, pnote)
+            return note(f"📈 {sender} — progress on {oid}", pnote)
     except EconomyError as exc:
         return note(f"economy: couldn't apply {kind} from {sender} — {exc}")
     return None

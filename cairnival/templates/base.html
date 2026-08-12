@@ -256,6 +256,22 @@
   .bubble-title { font-weight: bold; margin-bottom: .1rem; }
   .bubble-body { white-space: pre-wrap; overflow-wrap: anywhere; }
 
+  .board-app .column.wide { max-width: none; }
+  .board-post { display: flex; flex-wrap: wrap; gap: .5rem; align-items: center; }
+  .board-post input { flex: 1 1 12rem; }
+  .kanban { display: grid; grid-template-columns: repeat(5, minmax(150px, 1fr)); gap: .6rem; overflow-x: auto; }
+  .kcol { background: var(--bg); border: 1px solid var(--line); border-radius: 10px; padding: .4rem; min-width: 150px; }
+  .kcol-head { font: 12px/1.6 ui-monospace, monospace; text-transform: uppercase; letter-spacing: .05em; color: var(--dim); display: flex; justify-content: space-between; align-items: center; padding: .1rem .2rem .4rem; }
+  .kcard { background: var(--card); border: 1px solid var(--line); border-radius: 8px; padding: .5rem; margin-bottom: .5rem; }
+  .kcard-top { display: flex; justify-content: space-between; font: 11px/1.4 ui-monospace, monospace; color: var(--dim); }
+  .kcard-title { font-size: .9rem; margin: .2rem 0; overflow-wrap: anywhere; }
+  .kcard-meta { font: 11px/1.4 ui-monospace, monospace; color: var(--dim); }
+  .kbids { margin-top: .4rem; border-top: 1px dashed var(--line); padding-top: .3rem; }
+  .kbid, .kmini { display: flex; gap: .3rem; align-items: center; font-size: 12px; margin-top: .25rem; }
+  .kbid span { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .kmini input { flex: 1; font-size: 12px; padding: .1rem .4rem; }
+  .kprog { margin-top: .35rem; font: 11px/1.4 ui-monospace, monospace; color: var(--dim); }
+
   .loglines { list-style: none; margin: .3rem 0 0; padding: 0; }
   .loglines li {
     font: 13px/1.6 ui-monospace, monospace; color: var(--ink);

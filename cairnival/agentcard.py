@@ -57,6 +57,7 @@ def build(cfg, memory, base_url: str) -> dict[str, Any]:
         endpoints["mcp"] = url("/mcp")
     if getattr(cfg, "economy_enabled", False):
         endpoints["reputation"] = url("/api/reputation")
+        endpoints["board"] = url("/api/board")
 
     card: dict[str, Any] = {
         "name": cfg.name,

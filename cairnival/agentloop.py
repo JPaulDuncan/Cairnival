@@ -61,7 +61,8 @@ _ACTION_VERBS = (
     "run", "shell", "use", "write-tool", "send", "propose", "remember",
     "pursue", "locate", "help", "follow", "unfollow", "like", "unlike",
     "reply", "personality", "ping", "surface", "ask", "mcp", "bluesky",
-    "offer", "accept", "decline", "submit", "release", "rate", "final",
+    "offer", "accept", "decline", "submit", "release", "rate",
+    "jobs", "bid", "award", "progress", "final",
 )
 
 
@@ -209,11 +210,19 @@ def _describe(action: Action) -> str:
     if action.kind == "bluesky":
         return "posted to Bluesky"
     if action.kind == "offer":
-        return f"offered a paid job to {action.arg}"
+        return f"offered a paid job to {action.arg}" if action.arg else "posted an open job to the board"
     if action.kind in ("accept", "decline", "submit", "release"):
         return f"{action.kind}ed work order {action.arg}"
     if action.kind == "rate":
         return f"rated work order {action.arg}"
+    if action.kind == "jobs":
+        return "browsed the job board"
+    if action.kind == "bid":
+        return f"bid on job {action.arg}"
+    if action.kind == "award":
+        return f"awarded job {action.arg}"
+    if action.kind == "progress":
+        return f"posted progress on {action.arg}"
     return action.kind
 
 
@@ -417,14 +426,18 @@ def _system_prompt(soul: str, registry: ToolRegistry, cfg, ctx) -> str:
         + _remembered(ctx, cfg)
         + _pursuits_block(ctx, cfg)
         + (
-            "- ```offer:<agent>``` — pay another agent to do a task. Body: "
+            "- ```offer:<agent>``` — pay a specific agent to do a task. Body: "
             "`coins:` (the bounty) and `criteria:` (how you'll judge it done). "
-            "Coins are reserved now, escrowed when they accept, and released "
-            "when you approve their work. Pick a doer with good reputation.\n"
-            "- ```accept:<order>``` / ```decline:<order>``` — take or refuse a "
-            "job offered to you (its coins are escrowed by the asker on accept).\n"
-            "- ```submit:<order>``` — hand in your deliverable (in the body) for "
-            "a job you accepted; the asker verifies and pays.\n"
+            "Omit the agent — just ```offer``` — to POST an OPEN job to your "
+            "board that any agent can bid on.\n"
+            "- ```jobs``` — browse OPEN jobs across the federation you could earn "
+            "coins on. ```bid:<agent>/<order>``` bids on one (body = your pitch).\n"
+            "- ```award:<order>``` — award your open job to a bidder (body "
+            "`to: <agent>`); its coins are escrowed. ```accept:<order>``` / "
+            "```decline:<order>``` take or refuse a job offered directly to you.\n"
+            "- ```progress:<order>``` — tell the job's owner how it's going (body "
+            "= the update); their board advances. ```submit:<order>``` hands in "
+            "your deliverable (body) for verification.\n"
             "- ```release:<order>``` — approve a job you posted; the escrow goes "
             "to the doer. ```rate:<order>``` (body `stars: 1-5`) rates them.\n"
             if getattr(cfg, "economy_enabled", False)
@@ -462,16 +475,22 @@ def _observe_economy(action: Action, cfg, result: LoopResult, ctx) -> str:
     arg = action.arg.strip()
     try:
         if kind == "offer":
-            if not arg:
-                return "offer: name the agent like ```offer:handle``` with `coins:` and `criteria:` lines"
             fields = _parse_kv(action.body)
             try:
                 coins = int(fields.get("coins", "0"))
             except ValueError:
                 return "offer: `coins:` must be a whole number"
-            criteria = fields.get("criteria", "") or action.body.strip()
+            criteria = fields.get("criteria", "") or (action.body.strip() if not fields else "")
             if coins <= 0 or not criteria:
                 return "offer: need a positive `coins:` bounty and a `criteria:` (the success criteria)"
+            if not arg:
+                # open job: post to the board (local), any agent can bid
+                book = economy_net.book_for(cfg, memory)
+                order = book.create_offer(
+                    doer="", coins=coins, criteria=criteria, title=fields.get("title", ""),
+                    deadline=economy_net.deadline_in(int(getattr(cfg, "economy_escrow_days", 7))))
+                return (f"posted an open job ({order.id}, {coins} coins) to your board — "
+                        f"agents will find it with ```jobs``` and bid; ```award:{order.id}``` a bidder.")
             order, ok, how = economy_net.send_offer(
                 cfg, identity, memory, arg, coins, criteria, fields.get("title", ""))
             if ok:
@@ -479,6 +498,45 @@ def _observe_economy(action: Action, cfg, result: LoopResult, ctx) -> str:
                 return (f"offered {arg} a {coins}-coin job ({order.id}, {how}). "
                         f"Coins reserved; escrowed when they accept.")
             return f"couldn't reach {arg} to offer the job (it was cancelled, coins un-reserved)"
+        if kind == "jobs":
+            market = economy_net.discover_jobs(cfg, memory, limit=15)
+            if not market:
+                return "no open jobs on the boards you can see right now"
+            lines = [
+                f"- {j['asker']}/{j['id']}: {j['coins']} coins — {j.get('title') or j.get('criteria', '')[:60]}"
+                f" ({j.get('bids', 0)} bid(s))"
+                for j in market
+            ]
+            return "Open jobs you could bid on (```bid:asker/order```):\n" + "\n".join(lines)
+        if kind == "bid":
+            if "/" not in arg:
+                return "bid: name the job like ```bid:asker/ORDER-ID``` with your pitch in the body"
+            asker, oid = arg.split("/", 1)
+            url = memory.load_peers().get(asker.strip(), {}).get("public_url", "")
+            job = next((j for j in economy_net.fetch_board(url) if j.get("id") == oid.strip()), None) if url else None
+            if job is None:
+                return f"bid: couldn't find open job {oid} on {asker}'s board"
+            from .economy import WorkOrder
+            wo = WorkOrder(id=oid.strip(), asker=asker.strip(), doer="",
+                           coins=int(job.get("coins", 0) or 0), criteria=str(job.get("criteria", "")),
+                           title=str(job.get("title", "")))
+            ok, how = economy_net.send_bid(cfg, identity, memory, wo, action.body.strip())
+            return f"bid on {asker}/{oid} ({how}) — if they award it, do the work and ```submit```" if ok \
+                else f"bid recorded locally but couldn't reach {asker}"
+        if kind == "award":
+            fields = _parse_kv(action.body)
+            to = fields.get("to", "").strip() or (action.body.strip().split()[0] if action.body.strip() else "")
+            if not to:
+                return "award: name the bidder to award, e.g. body `to: handle`"
+            ok, how = economy_net.send_award(cfg, identity, memory, arg, to)
+            return f"awarded {arg} to {to} ({how}) — {to} now does the work; its coins are escrowed" if ok \
+                else f"awarded {arg} to {to} locally but couldn't notify them"
+        if kind == "progress":
+            if not action.body.strip():
+                return "progress: put the update in the block body"
+            ok, how = economy_net.send_progress(cfg, identity, memory, arg, action.body.strip())
+            return f"posted progress on {arg} ({how}) — the owner's board advances" if ok \
+                else f"logged progress on {arg} locally but couldn't notify the owner"
         if kind == "accept":
             ok, how = economy_net.send_accept(cfg, identity, memory, arg)
             return f"accepted {arg} ({how}) — now do the work and ```submit:{arg}```" if ok \
@@ -675,7 +733,8 @@ def _observe(action: Action, registry: ToolRegistry, cfg, result: LoopResult, ct
         except BlueskyError as exc:
             return f"bluesky post failed: {exc}"
         return f"posted to Bluesky ({res.get('uri', 'ok')})"
-    if action.kind in ("offer", "accept", "decline", "submit", "release", "rate"):
+    if action.kind in ("offer", "accept", "decline", "submit", "release", "rate",
+                        "jobs", "bid", "award", "progress"):
         return _observe_economy(action, cfg, result, ctx)
     if action.kind == "propose":
         ledger = getattr(ctx, "ledger", None)

@@ -1,0 +1,42 @@
+{% extends "base.html" %}
+{% import "_rail.html" as railmod %}
+{% block title %}Surfaces — {{ cfg.name }}{% endblock %}
+{% block brand %}{{ cfg.name }}{% endblock %}
+{% block tagline %}tool surfaces{% endblock %}
+{% block nav %}{% endblock %}
+{% block content %}
+<div class="app">
+  {{ railmod.rail(cfg, "/surfaces") }}
+  <main class="column">
+
+<p class="label">
+  surfaces are the little apps {{ cfg.name }} builds for itself — a tool with a
+  form and a result. The agent adds one by writing a tool with <code>ui: true</code>
+  front matter, or with the <code>surface</code> action.
+</p>
+
+<h2>Surfaces ({{ surfaces | length }})</h2>
+{% if surfaces %}
+<div class="cards">
+  {% for t in surfaces %}
+  <div class="card">
+    <h3><a href="/surface/{{ t.name }}">{{ t.ui_title or t.name }}</a></h3>
+    <p>{{ t.description }}</p>
+    <div class="specimen-label">
+      {{ t.name }} · {{ t.interpreter }} · {{ t.ui_output }} output ·
+      inputs: {{ t.ui_inputs | join(', ') if t.ui_inputs else 'none' }}
+    </div>
+    <p style="margin-top:.5rem"><a href="/surface/{{ t.name }}">open →</a>
+      · <a class="label" href="/tools/{{ t.name }}">source</a></p>
+  </div>
+  {% endfor %}
+</div>
+{% else %}
+<p><em>No surfaces yet. When {{ cfg.name }} writes a tool that would be nicer
+with a form — a lookup, a generator, a little dashboard — it can give it a UI
+here and you'll be able to run it by hand.</em></p>
+{% endif %}
+
+  </main>
+</div>
+{% endblock %}

@@ -44,7 +44,7 @@ _FENCE_RE = re.compile(r"```([^\n`]*)\n(.*?)```", re.DOTALL)
 _ACTION_VERBS = (
     "run", "shell", "use", "write-tool", "send", "propose", "remember",
     "pursue", "locate", "help", "follow", "unfollow", "like", "unlike",
-    "reply", "personality", "ping", "final",
+    "reply", "personality", "ping", "surface", "final",
 )
 
 
@@ -92,13 +92,16 @@ def parse_action(text: str) -> Action:
     return Action(kind="final", body=text.strip())
 
 
-def _parse_tool_spec(default_name: str, body: str) -> tuple[str, str, str, str]:
-    """Split a write-tool block into (name, interpreter, description, script).
+def _parse_tool_spec(default_name: str, body: str) -> tuple[str, str, str, str, dict]:
+    """Split a write-tool block into (name, interpreter, description, script, ui).
 
     Front matter (``key: value`` lines) up to a ``---`` divider, then the
-    script. Missing divider means the whole body is the script.
+    script. Missing divider means the whole body is the script. Optional UI
+    front matter — ``ui: true``, ``ui-title:``, ``inputs: a, b``, ``output:
+    text|html`` — declares a surface in the agent UI.
     """
     name, interpreter, description = default_name, "bash", ""
+    ui: dict = {}
     if "\n---\n" in body or body.startswith("---\n"):
         header, _, script = body.partition("\n---\n")
         if body.startswith("---\n"):  # no leading front matter before divider
@@ -114,9 +117,20 @@ def _parse_tool_spec(default_name: str, body: str) -> tuple[str, str, str, str]:
                 interpreter = value or interpreter
             elif key in ("description", "desc"):
                 description = value
+            elif key == "ui":
+                ui["enabled"] = value.strip().lower() in ("true", "yes", "1", "on")
+            elif key in ("ui-title", "ui_title", "surface", "title"):
+                ui["title"] = value
+                ui.setdefault("enabled", True)
+            elif key in ("inputs", "fields"):
+                ui["inputs"] = [p.strip() for p in value.split(",") if p.strip()]
+                ui.setdefault("enabled", True)
+            elif key in ("output", "ui-output"):
+                ui["output"] = value.strip().lower()
+                ui.setdefault("enabled", True)
     else:
         script = body
-    return name, interpreter, description, script.strip()
+    return name, interpreter, description, script.strip(), ui
 
 
 def _parse_kv(body: str) -> dict[str, str]:
@@ -143,7 +157,8 @@ def _describe(action: Action) -> str:
         fields = _parse_kv(action.body)
         return f"wrote tool {fields.get('name', action.arg or 'tool')}"
     if action.kind == "send":
-        return f"messaged {action.arg}"
+        preview = f': "{first}"' if first else ""
+        return f"sent message to {action.arg}{preview}"
     if action.kind == "locate":
         return f"located {action.arg or action.body.strip()[:40]}"
     if action.kind == "propose":
@@ -168,6 +183,8 @@ def _describe(action: Action) -> str:
         return "revised personality"
     if action.kind == "ping":
         return f"pinged {action.arg}"
+    if action.kind == "surface":
+        return f"added a UI surface for {action.arg}"
     return action.kind
 
 
@@ -268,7 +285,14 @@ def _system_prompt(soul: str, registry: ToolRegistry, cfg, ctx) -> str:
         "- ```use:<tool>``` — run one of your tools; the block body is its arguments.\n"
         "- ```write-tool``` — author a reusable tool. Front matter (name, "
         "interpreter: bash|python|node, description), then `---`, then the "
-        "script. Tools you write are saved and available on every future wake.\n"
+        "script. Tools you write are saved and available on every future wake. "
+        "To give the tool its own page in this UI, add front matter `ui: true`, "
+        "`inputs: a, b` (form fields passed to your script as arguments in "
+        "order), and `output: text|html` — a person can then run it from the "
+        "Surfaces tab.\n"
+        "- ```surface:<tool>``` — add (or update) a UI surface for a tool you "
+        "already have. Body: `title:`, `inputs: a, b`, `output: text|html`; "
+        "`enabled: false` removes it.\n"
         "- ```send:<agent>``` — send a message to another agent on the midway; "
         "the block body is your message. It lands in their inbox and they can "
         "reply to you.\n"
@@ -502,19 +526,49 @@ def _observe(action: Action, registry: ToolRegistry, cfg, result: LoopResult, ct
             result.tools_used.append(action.arg)
         return res.render(limit)
     if action.kind == "write-tool":
-        name, interp, desc, script = _parse_tool_spec(action.arg or "tool", action.body)
+        name, interp, desc, script, ui = _parse_tool_spec(action.arg or "tool", action.body)
         if not script:
             return "write-tool: empty script; nothing written"
+        ui_on = bool(ui.get("enabled"))
         try:
-            tool = registry.write_tool(name, desc, interp, script)
+            tool = registry.write_tool(
+                name, desc, interp, script,
+                ui=ui_on,
+                ui_title=ui.get("title", ""),
+                ui_inputs=ui.get("inputs", []),
+                ui_output=ui.get("output", "text"),
+            )
         except ToolError as exc:
             return f"write-tool refused: {exc}"
         result.tools_written.append(tool.name)
+        surfaced = (
+            f" It has a UI surface at /surface/{tool.name} (inputs: "
+            f"{', '.join(tool.ui_inputs) or 'none'})." if tool.ui else ""
+        )
         return (
             f"wrote tool '{tool.name}' ({tool.interpreter}). It is available now "
             "and will be discovered on every future wake. Use it with "
-            f"```use:{tool.name}```."
+            f"```use:{tool.name}```.{surfaced}"
         )
+    if action.kind == "surface":
+        name = action.arg.strip()
+        if not name:
+            return "surface: name the tool like ```surface:toolname```"
+        fields = _parse_kv(action.body)
+        enabled = fields.get("enabled", "true").strip().lower() not in ("false", "no", "0", "off")
+        inputs = [p.strip() for p in fields.get("inputs", fields.get("fields", "")).split(",") if p.strip()]
+        ok = registry.set_ui(
+            name,
+            enabled=enabled,
+            title=fields.get("title", ""),
+            inputs=inputs or None,
+            output=fields.get("output", "text"),
+        )
+        if not ok:
+            return f"surface: no such tool '{name}'"
+        if enabled:
+            return f"added a UI surface for {name} at /surface/{name} — it appears under Surfaces in your UI"
+        return f"removed the UI surface for {name}"
     return ""
 
 

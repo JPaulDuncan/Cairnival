@@ -63,12 +63,26 @@ def test_parse_action_variants():
 
 
 def test_parse_tool_spec_front_matter():
-    name, interp, desc, script = _parse_tool_spec(
+    name, interp, desc, script, ui = _parse_tool_spec(
         "fallback",
         "name: greet\ninterpreter: bash\ndescription: say hi\n---\necho hi",
     )
     assert (name, interp, desc) == ("greet", "bash", "say hi")
     assert script == "echo hi"
+    assert ui == {}  # no UI declared
+
+
+def test_parse_tool_spec_ui_front_matter():
+    name, interp, desc, script, ui = _parse_tool_spec(
+        "fallback",
+        "name: weather\ninterpreter: python\nui: true\ntitle: Weather\n"
+        "inputs: city, days\noutput: html\n---\nprint('hi')",
+    )
+    assert name == "weather"
+    assert ui["enabled"] is True
+    assert ui["title"] == "Weather"
+    assert ui["inputs"] == ["city", "days"]
+    assert ui["output"] == "html"
 
 
 def test_loop_runs_shell_then_answers(tmp_path):

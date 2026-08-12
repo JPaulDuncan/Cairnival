@@ -74,9 +74,15 @@ class Tool:
     created: str = field(default_factory=utcnow)
     shared: bool = True  # advertised to the federation (subject to policy)
     dir: Path | None = None
+    # A UI surface: when set, the tool gets its own page in the agent UI with a
+    # form for its inputs and its output rendered inline.
+    ui: bool = False
+    ui_title: str = ""            # human label for the surface
+    ui_inputs: list[str] = field(default_factory=list)  # named form fields, passed as args in order
+    ui_output: str = "text"        # "text" (preformatted) or "html" (sandboxed)
 
     def to_manifest(self) -> dict[str, Any]:
-        return {
+        m: dict[str, Any] = {
             "name": self.name,
             "description": self.description,
             "interpreter": self.interpreter,
@@ -85,9 +91,17 @@ class Tool:
             "created": self.created,
             "shared": self.shared,
         }
+        if self.ui:
+            m["ui"] = {
+                "title": self.ui_title,
+                "inputs": self.ui_inputs,
+                "output": self.ui_output,
+            }
+        return m
 
     @classmethod
     def from_manifest(cls, data: dict[str, Any], tool_dir: Path) -> "Tool":
+        ui = data.get("ui") or {}
         return cls(
             name=str(data["name"]),
             description=str(data.get("description", "")),
@@ -97,6 +111,10 @@ class Tool:
             created=str(data.get("created", "")),
             shared=bool(data.get("shared", True)),
             dir=tool_dir,
+            ui=bool(ui),
+            ui_title=str(ui.get("title", "")) if ui else "",
+            ui_inputs=[str(x) for x in ui.get("inputs", [])] if ui else [],
+            ui_output=(str(ui.get("output", "text")).lower() if ui else "text"),
         )
 
 
@@ -155,6 +173,28 @@ class ToolRegistry:
         )
         return True
 
+    def ui_tools(self) -> list["Tool"]:
+        """Tools that have declared a UI surface, for the agent UI to render."""
+        return [t for t in self.tools.values() if t.ui]
+
+    def set_ui(
+        self, name: str, *, enabled: bool, title: str = "", inputs=None, output: str = "text"
+    ) -> bool:
+        """Attach (or remove) a UI surface for a tool and persist it."""
+        tool = self.tools.get(name)
+        if tool is None or tool.dir is None:
+            return False
+        tool.ui = enabled
+        if enabled:
+            tool.ui_title = title or tool.ui_title or tool.name
+            if inputs is not None:
+                tool.ui_inputs = [str(x).strip() for x in inputs if str(x).strip()]
+            tool.ui_output = "html" if str(output).lower() == "html" else "text"
+        (tool.dir / "tool.json").write_text(
+            json.dumps(tool.to_manifest(), indent=2), encoding="utf-8"
+        )
+        return True
+
     def catalog(self) -> str:
         """Human/model-readable list of available tools."""
         if not self.tools:
@@ -172,6 +212,11 @@ class ToolRegistry:
         interpreter: str,
         body: str,
         author: str = "agent",
+        *,
+        ui: bool = False,
+        ui_title: str = "",
+        ui_inputs=None,
+        ui_output: str = "text",
     ) -> Tool:
         interpreter = interpreter.lower().strip()
         if interpreter not in INTERPRETERS:
@@ -192,6 +237,10 @@ class ToolRegistry:
             interpreter=interpreter,
             entry=entry,
             author=author,
+            ui=bool(ui),
+            ui_title=(ui_title or name) if ui else "",
+            ui_inputs=[str(x).strip() for x in (ui_inputs or []) if str(x).strip()] if ui else [],
+            ui_output=("html" if str(ui_output).lower() == "html" else "text") if ui else "text",
         )
         (tool_dir / "tool.json").write_text(
             json.dumps(tool.to_manifest(), indent=2), encoding="utf-8"

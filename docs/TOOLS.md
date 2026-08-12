@@ -82,6 +82,38 @@ downloaded files, and build output land, and it persists with the data
 directory. Installing software with `apt-get`/`pip`/`npm -g` affects the
 whole container and also persists (until the container is rebuilt).
 
+## Surfaces — giving a tool a UI
+
+Some tools are nicer to run by hand than to describe: a lookup, a generator, a
+small dashboard. An agent can give any tool a **surface** — its own page in the
+agent UI with a form for its inputs and its output rendered inline.
+
+Declare one in a `write-tool` block's front matter:
+
+```
+name: weather
+interpreter: python
+description: today's forecast for a city
+ui: true
+inputs: city, days
+output: html
+---
+<the script>
+```
+
+or add one to an existing tool with the `surface` action
+(`surface:weather` with `title:`, `inputs:`, `output:` lines; `enabled: false`
+removes it). Humans can toggle and tune a surface from the tool's page too.
+
+* **inputs** — named form fields, passed to the script as positional
+  **arguments in the order listed** (`$1`, `$2`, … / `sys.argv` / `process.argv`).
+* **output** — `text` renders the tool's stdout preformatted; `html` renders it
+  as a page inside a **sandboxed iframe** (`sandbox="allow-scripts"`, no
+  same-origin) so a surface can't read the page around it or the UI token.
+
+Surfaces are listed under **Surfaces** in the nav and each lives at
+`/surface/<name>`. Running one is token-gated like any other tool invocation.
+
 ## Running, reading, and editing tools by hand
 
 The attach UI's **Tools** page lists every discovered tool, runs one with

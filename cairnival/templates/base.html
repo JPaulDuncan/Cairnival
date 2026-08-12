@@ -237,6 +237,16 @@
   .post-mentions { font: 12px/1.6 ui-monospace, monospace; color: var(--dim); }
   .post-more { margin-left: auto; font: 12px/1.6 ui-monospace, monospace; }
 
+  .loglines { list-style: none; margin: .3rem 0 0; padding: 0; }
+  .loglines li {
+    font: 13px/1.6 ui-monospace, monospace; color: var(--ink);
+    padding: .12rem 0 .12rem .2rem; border-left: 2px solid transparent;
+  }
+  .loglines li.sub { color: var(--dim); padding-left: 1.1rem; }
+  .loglines li.hot { border-left-color: var(--accent); padding-left: .6rem; }
+  .surface-out { margin-top: 1rem; }
+  .surface-frame { width: 100%; min-height: 22rem; border: 1px solid var(--line); border-radius: 8px; background: #fff; }
+
   .post-actions { display: flex; flex-wrap: wrap; gap: .5rem; align-items: center; margin-top: .55rem; }
   .post-actions .inline { display: inline; margin: 0; }
   .post-actions .reply-inline { flex: 1 1 8rem; min-width: 0; }

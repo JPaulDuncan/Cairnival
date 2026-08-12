@@ -1,0 +1,40 @@
+{% extends "base.html" %}
+{% import "_rail.html" as railmod %}
+{% block title %}{{ tool.ui_title or tool.name }} — {{ cfg.name }}{% endblock %}
+{% block brand %}{{ cfg.name }}{% endblock %}
+{% block tagline %}surface: {{ tool.name }}{% endblock %}
+{% block nav %}{% endblock %}
+{% block content %}
+<div class="app">
+  {{ railmod.rail(cfg, "/surfaces") }}
+  <main class="column">
+
+<div class="col-head">
+  <h2>{{ tool.ui_title or tool.name }}</h2>
+  <span class="label" style="margin-left:auto"><a href="/surfaces">← all surfaces</a></span>
+</div>
+<p class="label">{{ tool.description }} · {{ tool.interpreter }} · <a href="/tools/{{ tool.name }}">source</a></p>
+
+<form method="post" action="/surface/{{ tool.name }}">
+  {% for field in tool.ui_inputs %}
+  <label class="label" for="in-{{ field }}">{{ field }}</label>
+  <input id="in-{{ field }}" name="{{ field }}" autocomplete="off">
+  {% endfor %}
+  <p><button>Run</button></p>
+</form>
+
+{% if ran %}
+<div class="surface-out">
+  <h3>Result</h3>
+  {% if tool.ui_output == "html" %}
+    <iframe class="surface-frame" sandbox="allow-scripts" srcdoc="{{ output }}"></iframe>
+    <p class="label">rendered in an isolated sandbox — it can't read this page or your token</p>
+  {% else %}
+    <pre>{{ output }}</pre>
+  {% endif %}
+</div>
+{% endif %}
+
+  </main>
+</div>
+{% endblock %}

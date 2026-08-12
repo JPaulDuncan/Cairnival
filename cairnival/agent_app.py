@@ -459,6 +459,30 @@ def create_app(cfg: AgentConfig | None = None) -> FastAPI:
         return _redirect(request, request.headers.get("referer", "/"))
 
     # -- tools -------------------------------------------------------------
+    @app.get("/journal", response_class=HTMLResponse)
+    def journal_page(request: Request):
+        """The action log: what the agent actually did each wake — answered
+        inbox messages, sent messages, ran and wrote tools, made proposals.
+        The record is actions, never the model's reasoning."""
+        c = current()
+        memory = open_memory(c)
+        raw = memory.journal_tail(60000)
+        # split into wake sections (newest first) for a readable timeline
+        sections: list[dict[str, object]] = []
+        current_sec: dict[str, object] | None = None
+        for line in raw.splitlines():
+            if line.startswith("## "):
+                current_sec = {"head": line[3:].strip(), "lines": []}
+                sections.append(current_sec)
+            elif line.strip().startswith("- ") and current_sec is not None:
+                current_sec["lines"].append(line.strip()[2:])
+        sections.reverse()
+        return templates.TemplateResponse(
+            request,
+            "agent_journal.html",
+            {"cfg": c, "sections": sections, "empty": not sections},
+        )
+
     @app.get("/tools", response_class=HTMLResponse)
     def tools_page(request: Request):
         c = current()
@@ -549,6 +573,30 @@ def create_app(cfg: AgentConfig | None = None) -> FastAPI:
         registry.set_shared(name, shared not in ("", "0", "false"))
         return _redirect(request, f"/tools/{name}")
 
+    @app.post("/tools/{name}/surface")
+    def tool_surface(
+        request: Request,
+        name: str,
+        enabled: str = Form(""),
+        title: str = Form(""),
+        inputs: str = Form(""),
+        output: str = Form("text"),
+    ):
+        check_token(request)
+        c = current()
+        memory = open_memory(c)
+        registry = ToolRegistry(memory.tools_dir, memory.workspace_dir, c)
+        registry.discover()
+        on = enabled not in ("", "0", "false")
+        registry.set_ui(
+            name,
+            enabled=on,
+            title=title.strip(),
+            inputs=[p.strip() for p in inputs.split(",") if p.strip()] or None,
+            output=output,
+        )
+        return _redirect(request, f"/tools/{name}")
+
     @app.post("/tools/shell")
     def tools_shell(request: Request, command: str = Form(...)):
         check_token(request)
@@ -558,6 +606,60 @@ def create_app(cfg: AgentConfig | None = None) -> FastAPI:
         result = registry.run_shell(command)
         _last_tool_output["text"] = f"$ {command}\n" + result.render(c.tools_output_limit)
         return _redirect(request, "/tools?ran=shell")
+
+    # -- tool UI surfaces --------------------------------------------------
+    @app.get("/surfaces", response_class=HTMLResponse)
+    def surfaces_page(request: Request):
+        """Every tool the agent gave a UI — the surfaces it built for itself."""
+        c = current()
+        memory = open_memory(c)
+        registry = ToolRegistry(memory.tools_dir, memory.workspace_dir, c)
+        registry.discover()
+        return templates.TemplateResponse(
+            request,
+            "agent_surfaces.html",
+            {"cfg": c, "surfaces": registry.ui_tools()},
+        )
+
+    def _render_surface(request: Request, name: str, output: str = "", ran: bool = False):
+        c = current()
+        memory = open_memory(c)
+        registry = ToolRegistry(memory.tools_dir, memory.workspace_dir, c)
+        registry.discover()
+        tool = registry.tools.get(name)
+        if tool is None or not tool.ui:
+            raise HTTPException(404, "no such surface")
+        return templates.TemplateResponse(
+            request,
+            "agent_surface.html",
+            {"cfg": c, "tool": tool, "output": output, "ran": ran},
+        )
+
+    @app.get("/surface/{name}", response_class=HTMLResponse)
+    def surface_page(request: Request, name: str):
+        return _render_surface(request, name)
+
+    @app.post("/surface/{name}", response_class=HTMLResponse)
+    async def surface_run(request: Request, name: str):
+        check_token(request)
+        c = current()
+        memory = open_memory(c)
+        registry = ToolRegistry(memory.tools_dir, memory.workspace_dir, c)
+        registry.discover()
+        tool = registry.tools.get(name)
+        if tool is None or not tool.ui:
+            raise HTTPException(404, "no such surface")
+        form = await request.form()
+        # inputs are passed to the tool as positional args in declared order
+        args = [str(form.get(field, "")) for field in tool.ui_inputs]
+        result = registry.run_tool(name, args)
+        if tool.ui_output == "html":
+            # the tool's own HTML, isolated in a sandboxed frame (no cookies,
+            # no reaching the parent page) so a surface can't touch the token
+            output = result.output if result.ok else result.render(c.tools_output_limit)
+        else:
+            output = result.render(c.tools_output_limit)
+        return _render_surface(request, name, output=output, ran=True)
 
     # -- settings ----------------------------------------------------------
     @app.get("/settings", response_class=HTMLResponse)

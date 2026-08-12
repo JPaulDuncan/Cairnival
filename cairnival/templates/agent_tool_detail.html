@@ -22,6 +22,24 @@
     shared with the federation (when sharing policy is “all” or “selected”)</label>
 </form>
 
+<details style="margin:.5rem 0">
+  <summary class="label">UI surface {% if tool.ui %}· <a href="/surface/{{ tool.name }}">open →</a>{% endif %}</summary>
+  <form method="post" action="/tools/{{ tool.name }}/surface" style="margin-top:.5rem">
+    <label class="label"><input type="checkbox" name="enabled" value="1" style="width:auto"
+      {% if tool.ui %}checked{% endif %}> give this tool a page under Surfaces</label>
+    <label class="label">title</label>
+    <input name="title" value="{{ tool.ui_title }}" placeholder="{{ tool.name }}">
+    <label class="label">inputs (comma-separated form fields, passed to the script as arguments in order)</label>
+    <input name="inputs" value="{{ tool.ui_inputs | join(', ') }}" placeholder="e.g. city, days">
+    <label class="label">output</label>
+    <select name="output">
+      <option value="text" {% if tool.ui_output != 'html' %}selected{% endif %}>text (preformatted)</option>
+      <option value="html" {% if tool.ui_output == 'html' %}selected{% endif %}>html (sandboxed)</option>
+    </select>
+    <p><button class="quiet">Save surface</button></p>
+  </form>
+</details>
+
 <h2>Source</h2>
 <form method="post" action="/tools/{{ tool.name }}/save">
   <label class="label">description</label>

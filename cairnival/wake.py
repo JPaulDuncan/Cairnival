@@ -136,13 +136,25 @@ def _self_directed_instruction(ctx: WakeContext) -> Instruction:
     )
 
 
+def _worked_line(ins: Instruction) -> str:
+    """A clear journal line naming what was worked — and, for messages that
+    came from another agent, that this was an inbox item being answered."""
+    if ins.source == "federation":
+        who = f" from {ins.sender}" if ins.sender else ""
+        verb = "answered inbox message" if ins.reply_to else "read inbox message"
+        return f"{verb}{who}: {ins.title}"
+    if ins.source == "treasury":
+        return f"answered paid question: {ins.title}"
+    return f"worked: {ins.title} [{ins.source}]"
+
+
 def _work_instruction(ctx: WakeContext, ins: Instruction) -> dict[str, Any]:
     """Do one instruction. With tools enabled this is an agentic loop the
     model drives (shell, its own tools, writing new tools); otherwise it is a
     single honest reply."""
     if ctx.cfg.tools_enabled:
         outcome = agentloop.solve(ctx, ins, ctx.registry)
-        ctx.note(f"worked: {ins.title} [{ins.source}]")
+        ctx.note(_worked_line(ins))
         # Record each ACTION taken — never the model's reasoning.
         for desc in outcome.actions:
             ctx.note(f"  · {desc}")
@@ -173,7 +185,7 @@ def _work_instruction(ctx: WakeContext, ins: Instruction) -> dict[str, Any]:
     try:
         # This answer is recorded, so generate it without visible reasoning.
         answer = ctx.llm.chat(soul, prompt, think=False)
-        ctx.note(f"worked: {ins.title} [{ins.source}]")
+        ctx.note(_worked_line(ins))
     except LLMError as exc:
         answer = f"(the instrument failed on this one: {exc})"
         ctx.note(f"LLM error on '{ins.title}': {exc}")

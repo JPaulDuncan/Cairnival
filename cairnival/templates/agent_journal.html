@@ -1,0 +1,37 @@
+{% extends "base.html" %}
+{% import "_rail.html" as railmod %}
+{% block title %}Log — {{ cfg.name }}{% endblock %}
+{% block brand %}{{ cfg.name }}{% endblock %}
+{% block tagline %}the action log{% endblock %}
+{% block nav %}{% endblock %}
+{% block content %}
+<div class="app">
+  {{ railmod.rail(cfg, "/journal") }}
+  <main class="column">
+
+<p class="label">
+  what {{ cfg.name }} actually did, wake by wake — inbox messages answered,
+  messages sent, tools run and written, proposals made. Actions only, never the
+  model's reasoning. Newest first.
+</p>
+
+{% if empty %}
+<p><em>Nothing logged yet. The agent records each action as it works — hit
+“Wake now” or give it something to do.</em></p>
+{% else %}
+{% for sec in sections %}
+<div class="card" style="margin-bottom:.9rem">
+  <div class="specimen-label">{{ sec.head }}</div>
+  <ul class="loglines">
+    {% for line in sec.lines %}
+    <li class="{% if line.startswith('· ') or line.startswith('  ') %}sub{% endif %}
+      {%- if 'answered inbox' in line or 'sent message' in line or 'replied to' in line %} hot{% endif %}">{{ line }}</li>
+    {% endfor %}
+  </ul>
+</div>
+{% endfor %}
+{% endif %}
+
+  </main>
+</div>
+{% endblock %}

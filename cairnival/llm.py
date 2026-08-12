@@ -11,6 +11,13 @@ The agent thinks with whatever is on the machine:
 
 All backends implement ``chat(system, prompt) -> str``.
 
+The CLI backends (``llamacpp-cli``, ``claude-cli``, ``codex-cli``) shell out to
+a local process. Each invocation is launched as its own process-group leader
+and the **whole group** is torn down when the call finishes — return, error, or
+timeout alike — so a coding-agent CLI and the helpers it spawns (MCP servers,
+tool subprocesses, a model runner) never linger in the background between wakes.
+See ``run_cli_capture``.
+
 Reasoning ("thinking") models — Qwen3, DeepSeek-R1, and the like — reason before
 answering, and that reasoning makes the answer better. We *want* the model to
 think. What we don't want is the monologue in the permanent record. So the rule
@@ -38,14 +45,97 @@ its next action and is discarded once the action is extracted.
 from __future__ import annotations
 
 import os
-import re
+import signal
 import subprocess
+import sys
+import re
 
 import httpx
 
 
 class LLMError(RuntimeError):
     pass
+
+
+def _terminate_tree(proc: subprocess.Popen) -> None:
+    """Shut the CLI down for good — the process *and* every child it spawned.
+
+    The coding-agent CLIs (claude, codex) and llama-cli fork helpers of their
+    own — MCP servers, tool subprocesses, a model runner. Killing only the
+    direct child would orphan those. Each CLI is launched as its own process-
+    group leader (``start_new_session=True``), so here we can signal the whole
+    group: a polite terminate, then a hard kill for anything that ignores it.
+    Called from a ``finally`` so the instance never lingers after a call —
+    whether it returned, raised, or timed out.
+    """
+    if proc.poll() is None:
+        try:
+            if os.name == "posix":
+                os.killpg(os.getpgid(proc.pid), signal.SIGTERM)
+            else:  # pragma: no cover - Windows
+                proc.terminate()
+        except (ProcessLookupError, PermissionError, OSError):
+            pass
+    try:
+        proc.wait(timeout=5)
+    except subprocess.TimeoutExpired:
+        try:
+            if os.name == "posix":
+                os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
+            else:  # pragma: no cover - Windows
+                proc.kill()
+        except (ProcessLookupError, PermissionError, OSError):
+            pass
+        try:
+            proc.wait(timeout=5)
+        except subprocess.TimeoutExpired:  # pragma: no cover - stuck kernel state
+            pass
+
+
+def run_cli_capture(
+    argv: list[str],
+    *,
+    label: str,
+    stdin: str | None = None,
+    cwd: str | None = None,
+    timeout: int = 300,
+) -> str:
+    """Run a local-model CLI to completion and return its stdout.
+
+    The child is its own session leader, and its whole process group is torn
+    down in a ``finally`` — so a timeout, a non-zero exit, or an unexpected
+    error can never leave a CLI (or the helpers it spawned) running in the
+    background.
+    """
+    popen_kwargs: dict = {}
+    if os.name == "posix":
+        popen_kwargs["start_new_session"] = True
+    elif sys.platform == "win32":  # pragma: no cover - Windows
+        popen_kwargs["creationflags"] = subprocess.CREATE_NEW_PROCESS_GROUP
+    try:
+        proc = subprocess.Popen(
+            argv,
+            stdin=subprocess.PIPE if stdin is not None else None,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            cwd=cwd,
+            **popen_kwargs,
+        )
+    except OSError as exc:
+        raise LLMError(f"{label} invocation failed: {exc}") from exc
+    try:
+        try:
+            out, err = proc.communicate(input=stdin, timeout=timeout)
+        except subprocess.TimeoutExpired as exc:
+            raise LLMError(f"{label} timed out after {timeout}s") from exc
+        if proc.returncode != 0:
+            raise LLMError(
+                f"{label} exited {proc.returncode}: {(err or '').strip()[:500]}"
+            )
+        return out or ""
+    finally:
+        _terminate_tree(proc)
 
 
 _THINK_BLOCK = re.compile(
@@ -241,17 +331,8 @@ class LlamaCppCliBackend(LLMBackend):
             "--simple-io",
             "--no-display-prompt",
         ]
-        try:
-            proc = subprocess.run(
-                cmd, capture_output=True, text=True, timeout=self.timeout
-            )
-        except (subprocess.TimeoutExpired, OSError) as exc:
-            raise LLMError(f"llama-cli invocation failed: {exc}") from exc
-        if proc.returncode != 0:
-            raise LLMError(
-                f"llama-cli exited {proc.returncode}: {proc.stderr.strip()[:500]}"
-            )
-        return strip_thinking(proc.stdout)
+        out = run_cli_capture(cmd, label="llama-cli", timeout=self.timeout)
+        return strip_thinking(out)
 
 
 class CliAgentBackend(LLMBackend):
@@ -287,28 +368,20 @@ class CliAgentBackend(LLMBackend):
         argv = list(self._argv)
         if self.extra:
             argv += self.extra.split()
-        stdin = ""
+        stdin: str | None = None
         if self.use_stdin:
             stdin = full
         else:
             argv = [a.replace("{prompt}", full) for a in argv]
         workdir = self.cwd if self.cwd and os.path.isdir(self.cwd) else None
-        try:
-            proc = subprocess.run(
-                argv,
-                input=stdin if self.use_stdin else None,
-                capture_output=True,
-                text=True,
-                timeout=self.timeout,
-                cwd=workdir,
-            )
-        except (subprocess.TimeoutExpired, OSError) as exc:
-            raise LLMError(f"{self.name} invocation failed: {exc}") from exc
-        if proc.returncode != 0:
-            raise LLMError(
-                f"{self.name} exited {proc.returncode}: {proc.stderr.strip()[:500]}"
-            )
-        return strip_thinking(proc.stdout)
+        out = run_cli_capture(
+            argv,
+            label=self.name,
+            stdin=stdin,
+            cwd=workdir,
+            timeout=self.timeout,
+        )
+        return strip_thinking(out)
 
 
 def build_backend(cfg) -> LLMBackend:

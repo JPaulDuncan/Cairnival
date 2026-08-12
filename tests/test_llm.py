@@ -1,8 +1,11 @@
+import os
+import time
+
 import httpx
 import pytest
 
 from cairnival.config import AgentConfig
-from cairnival.llm import OllamaBackend, build_backend, strip_thinking
+from cairnival.llm import LLMError, OllamaBackend, build_backend, run_cli_capture, strip_thinking
 
 
 def test_strip_thinking_removes_blocks():
@@ -101,3 +104,50 @@ def test_build_backend_defaults_to_thinking():
     assert isinstance(backend, OllamaBackend)
     assert backend.think is True      # on by default
     assert cfg.llm_max_tokens == 4096  # roomy budget so thinking fits
+
+
+# ---- CLI lifecycle: the instance is shut down when done ------------------
+
+def test_run_cli_capture_returns_stdout():
+    assert run_cli_capture(["printf", "%s", "hello"], label="printf") == "hello"
+
+
+def test_run_cli_capture_feeds_stdin():
+    assert run_cli_capture(["cat"], label="cat", stdin="piped in") == "piped in"
+
+
+def test_run_cli_capture_raises_on_nonzero_exit():
+    with pytest.raises(LLMError) as exc:
+        run_cli_capture(["sh", "-c", "echo boom >&2; exit 3"], label="cli")
+    assert "exited 3" in str(exc.value) and "boom" in str(exc.value)
+
+
+def test_run_cli_capture_raises_on_missing_binary():
+    with pytest.raises(LLMError):
+        run_cli_capture(["cairnival-no-such-binary-xyz"], label="ghost")
+
+
+@pytest.mark.skipif(os.name != "posix", reason="process-group teardown is POSIX-only")
+def test_run_cli_capture_timeout_kills_whole_tree(tmp_path):
+    """A CLI that spawns background helpers and then hangs must not leave those
+    helpers running once the call times out — the whole process group is torn
+    down, so the instance is truly shut down when we're done with it."""
+    pidfile = tmp_path / "child.pid"
+    # a shell that backgrounds a long sleep (a stand-in for an MCP server or
+    # tool subprocess the agent CLI would spawn), records its PID, then hangs
+    script = f"sleep 30 & echo $! > {pidfile}; sleep 30"
+
+    with pytest.raises(LLMError) as exc:
+        run_cli_capture(["sh", "-c", script], label="hang", timeout=1)
+    assert "timed out" in str(exc.value)
+
+    # the backgrounded grandchild shared the killed process group: it's gone
+    child_pid = int(pidfile.read_text().strip())
+    for _ in range(50):
+        try:
+            os.kill(child_pid, 0)  # 0 = liveness probe, doesn't actually signal
+        except ProcessLookupError:
+            break
+        time.sleep(0.1)
+    else:
+        pytest.fail(f"grandchild {child_pid} survived the timeout teardown")

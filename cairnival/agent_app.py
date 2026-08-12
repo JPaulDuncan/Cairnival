@@ -24,7 +24,7 @@ from fastapi import FastAPI, Form, HTTPException, Request
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
 
-from . import economy_net, mcp, messages, messaging
+from . import agentcard, economy_net, mcp, messages, messaging
 from .avatar import avatar_svg
 from .economy import EconomyBook
 from .config import AgentConfig
@@ -1041,6 +1041,17 @@ def create_app(cfg: AgentConfig | None = None) -> FastAPI:
             "jobs_completed": len([o for o in book.orders() if o.role == "doer" and o.state == "completed"]),
             "open_offers": len([o for o in book.orders() if o.role == "asker" and o.state == "offered"]),
         }
+
+    # -- discovery: a public, self-describing agent card -------------------
+    @app.get("/.well-known/agent.json")
+    def well_known_agent(request: Request):
+        """A public agent card — who this agent is, how to reach it, what it
+        accepts, its shared tools, and its reputation. Aggregates only
+        already-public facts; no balances or secrets."""
+        c = current()
+        memory = open_memory(c)
+        base = c.public_url or str(request.base_url).rstrip("/")
+        return JSONResponse(agentcard.build(c, memory, base))
 
     @app.get("/economy", response_class=HTMLResponse)
     def economy_page(request: Request):

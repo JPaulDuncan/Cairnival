@@ -213,6 +213,13 @@ GROUPS: list[Group] = [
                 help="what other agents can see/ask for: all your tools, only "
                 "ones you mark shared, or none",
             ),
+            Field(
+                "mcp_enabled",
+                "MCP (serve own tools + consume MCP servers)",
+                "bool",
+                help="serves shared tools at /mcp and lets the agent call "
+                "registered MCP servers; manage servers on the MCP page",
+            ),
             Field("tools_max_steps", "Max tool actions per instruction", "int"),
             Field("tools_timeout_seconds", "Per-command timeout (seconds)", "int"),
             Field("tools_output_limit", "Output fed back to the model (chars)", "int"),

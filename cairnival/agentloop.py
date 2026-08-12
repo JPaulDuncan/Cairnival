@@ -33,6 +33,7 @@ Action blocks (the info string after the opening fence names the action):
 
 from __future__ import annotations
 
+import json
 import re
 from dataclasses import dataclass, field
 from typing import Any
@@ -40,11 +41,26 @@ from typing import Any
 from . import messaging
 from .tools import ToolRegistry, ToolError, parse_args
 
+
+def _mcp_registry(ctx):
+    """The agent's MCP client registry, or None if MCP is off / unavailable."""
+    cfg = getattr(ctx, "cfg", None)
+    memory = getattr(ctx, "memory", None)
+    if cfg is None or memory is None or not getattr(cfg, "mcp_enabled", False):
+        return None
+    try:
+        from .mcp import MCPRegistry
+        reg = MCPRegistry(memory.mcp_path, cfg, timeout=cfg.tools_timeout_seconds)
+        reg.load()
+        return reg
+    except Exception:
+        return None
+
 _FENCE_RE = re.compile(r"```([^\n`]*)\n(.*?)```", re.DOTALL)
 _ACTION_VERBS = (
     "run", "shell", "use", "write-tool", "send", "propose", "remember",
     "pursue", "locate", "help", "follow", "unfollow", "like", "unlike",
-    "reply", "personality", "ping", "surface", "final",
+    "reply", "personality", "ping", "surface", "ask", "mcp", "final",
 )
 
 
@@ -185,6 +201,10 @@ def _describe(action: Action) -> str:
         return f"pinged {action.arg}"
     if action.kind == "surface":
         return f"added a UI surface for {action.arg}"
+    if action.kind == "ask":
+        return f"asked {action.arg} to do a task (with a response format)"
+    if action.kind == "mcp":
+        return f"called MCP tool {action.arg}"
     return action.kind
 
 
@@ -265,6 +285,18 @@ def _voice(ctx) -> str:
     return f"Your character and voice:\n{p}\n\n" if p else ""
 
 
+def _mcp_block(ctx) -> str:
+    """List the MCP tools this agent can reach — only when it has registered
+    servers, so the common case pays no network cost."""
+    reg = _mcp_registry(ctx)
+    if reg is None or not reg.servers:
+        return ""
+    catalog = reg.catalog()
+    if not catalog:
+        return ""
+    return "MCP tools you can call (```mcp:server/tool```):\n" + catalog + "\n\n"
+
+
 def _system_prompt(soul: str, registry: ToolRegistry, cfg, ctx) -> str:
     shell_line = (
         "- ```run``` — run a shell command in your workspace. You may install "
@@ -296,6 +328,15 @@ def _system_prompt(soul: str, registry: ToolRegistry, cfg, ctx) -> str:
         "- ```send:<agent>``` — send a message to another agent on the midway; "
         "the block body is your message. It lands in their inbox and they can "
         "reply to you.\n"
+        "- ```ask:<agent>``` — ask another agent to DO a task and tell them "
+        "exactly how to reply. Put a `format:` line (the response format you "
+        "want — e.g. JSON with named keys) before a `---` divider, then the "
+        "task below it. The agent will answer in that format, back to your "
+        "inbox. Prefer this over ```send``` when you need a machine-usable "
+        "answer from another agent.\n"
+        "- ```mcp:<server>/<tool>``` — call a tool on an MCP server you've "
+        "registered; the block body is its JSON arguments. Bare ```mcp``` lists "
+        "the MCP tools you can reach.\n"
         "- ```ping:<agent>``` — send a short progress/completion notice to an "
         "agent you're collaborating with. Optional first line `phase: "
         "start|progress|done|blocked`; the rest is your update. Use it to keep a "
@@ -333,7 +374,8 @@ def _system_prompt(soul: str, registry: ToolRegistry, cfg, ctx) -> str:
         + _pursuits_block(ctx, cfg)
         + "Your tools right now:\n"
         f"{registry.catalog()}\n\n"
-        "Other agents you can reach:\n"
+        + _mcp_block(ctx)
+        + "Other agents you can reach:\n"
         f"{_peer_roster(ctx)}\n\n"
         "Notes: instructions reach you from files, the web UI, paid treasury "
         "memos, peer messages (your inbox), and connectors — a paid question "
@@ -447,6 +489,57 @@ def _observe(action: Action, registry: ToolRegistry, cfg, result: LoopResult, ct
             f"could not reach {handle} — is it a known agent? "
             "(discovery happens each wake from the midway registry)"
         )
+    if action.kind == "ask":
+        handle = action.arg.strip()
+        if not handle:
+            return "ask: name the agent like ```ask:handle```"
+        identity = getattr(ctx, "identity", None)
+        if identity is None:
+            return "ask: no identity available in this context"
+        # front matter `format:` (the response contract) before `---`, then task
+        fmt, task = "", action.body.strip()
+        if "\n---\n" in action.body or action.body.startswith("---\n"):
+            header, _, rest = action.body.partition("\n---\n")
+            if action.body.startswith("---\n"):
+                header, rest = "", action.body[4:]
+            for line in header.splitlines():
+                if ":" in line:
+                    key, _, value = line.partition(":")
+                    if key.strip().lower() in ("format", "respond-with", "respond_with"):
+                        fmt = value.strip()
+            task = rest.strip()
+        if not task:
+            return "ask: put the task in the block body (a `format:` line before `---` sets the reply format)"
+        ok, how = messaging.deliver_note(
+            cfg, identity, ctx.memory, handle, task, respond_with=fmt,
+        )
+        if ok:
+            result.messages_sent.append(handle)
+            fmt_note = f" They will reply in the format you specified." if fmt else ""
+            return f"asked {handle} ({how}).{fmt_note} Their answer comes back to your inbox."
+        return f"could not reach {handle} to ask — locate them first, or they may be unknown"
+    if action.kind == "mcp":
+        registry_mcp = _mcp_registry(ctx)
+        if registry_mcp is None:
+            return "mcp is disabled for this agent"
+        ref = action.arg.strip()
+        if not ref:
+            cat = registry_mcp.catalog()
+            return f"MCP tools available:\n{cat}" if cat else "no MCP servers registered"
+        if "/" not in ref:
+            return "mcp: name the tool as ```mcp:server/tool``` with JSON arguments in the body"
+        server, tool = ref.split("/", 1)
+        try:
+            arguments = json.loads(action.body) if action.body.strip() else {}
+            if not isinstance(arguments, dict):
+                arguments = {}
+        except ValueError:
+            arguments = _parse_kv(action.body)
+        try:
+            out = registry_mcp.call(server.strip(), tool.strip(), arguments)
+        except Exception as exc:  # MCPError and anything the transport throws
+            return f"mcp call failed: {exc}"
+        return out or "(the MCP tool returned nothing)"
     if action.kind == "propose":
         ledger = getattr(ctx, "ledger", None)
         if ledger is None:
@@ -583,6 +676,12 @@ def solve(ctx, instruction, registry: ToolRegistry) -> LoopResult:
         + (", PAID" if getattr(instruction, "is_paid", False) else "")
         + f"):\nTitle: {instruction.title}\n\n{instruction.body}"
     )
+    respond_with = getattr(instruction, "respond_with", "")
+    if respond_with:
+        task += (
+            f"\n\nThe sender asked you to reply in this exact format — your "
+            f"```final``` answer MUST follow it:\n{respond_with}"
+        )
     result = LoopResult(answer="")
     transcript = ""
 

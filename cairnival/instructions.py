@@ -64,6 +64,7 @@ class Instruction:
     sender: str = ""
     reply_to: str = ""
     to: str = ""  # recipient handle — set on outgoing (source="sent") messages
+    respond_with: str = ""  # a response-format contract the sender asked us to honor
     priority: int = 5  # 1 highest .. 9 lowest
     paid: float = 0.0
     received: str = field(default_factory=utcnow)
@@ -80,6 +81,7 @@ class Instruction:
             "from": self.sender,
             "to": self.to,
             "reply_to": self.reply_to,
+            "respond_with": self.respond_with,
             "priority": self.priority,
             "received": self.received,
         }
@@ -109,6 +111,7 @@ class Instruction:
             sender=meta.get("from", ""),
             reply_to=meta.get("reply_to", ""),
             to=meta.get("to", ""),
+            respond_with=meta.get("respond_with", ""),
             priority=priority,
             paid=paid,
             received=meta.get("received", utcnow()),

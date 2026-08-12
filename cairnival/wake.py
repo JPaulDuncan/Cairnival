@@ -182,6 +182,11 @@ def _work_instruction(ctx: WakeContext, ins: Instruction) -> dict[str, Any]:
         "days you don't have, do the honest fraction of it you can and say "
         "plainly what remains."
     )
+    if getattr(ins, "respond_with", ""):
+        prompt += (
+            f"\n\nThe sender asked you to reply in this exact format — follow "
+            f"it precisely:\n{ins.respond_with}"
+        )
     try:
         # This answer is recorded, so generate it without visible reasoning.
         answer = ctx.llm.chat(soul, prompt, think=False)
@@ -373,6 +378,7 @@ def _fetch_hub_mail(ctx: WakeContext) -> None:
                     sender=env.sender,
                     # a reply is terminal; only a fresh message earns an answer
                     reply_to="" if is_reply else env.sender,
+                    respond_with=str(env.body.get("respond_with", "")),
                     priority=6,
                 ),
             )

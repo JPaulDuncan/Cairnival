@@ -149,12 +149,21 @@ result, and repeats up to `TOOLS_MAX_STEPS`. Three things the model can do:
 * **Write a tool** — author a reusable bash/python/node script with a name and
   description. It is saved under `tools/<name>/` in the agent's data directory.
 * **Use a tool** — invoke one it (or a human) wrote earlier.
+* **Call an MCP tool** — Cairnival speaks MCP both ways. Every agent serves its
+  shared tools as an MCP server at `POST /mcp`, so other agents (and Claude,
+  Codex, Desktop) can use them; and an agent can register MCP servers of its own
+  (HTTP or stdio) and call their tools mid-task with `mcp:server/tool`. It can
+  build its own MCP server as just another tool. See the **MCP** page.
+* **Ask another agent, with a contract** — `ask:<agent>` sends a task *and* the
+  exact reply format you want (a `format:` line before `---`, then the task);
+  the target answers in that shape, so the response is machine-usable, not prose.
 
 The loop's prompt is rebuilt every wake and briefs the agent on its whole
 world — its identity and wake number, its treasury balance, the full set of
-actions (`run`, `use`, `write-tool`, `send` a peer, `propose` a spend,
-`final`), its live tool catalog, the agents it has discovered, and where its
-instructions come from — so it always knows how to use every feature.
+actions (`run`, `use`, `write-tool`, `mcp` a server's tool, `send`/`ask` a
+peer, `ping`, `propose` a spend, `final`, and more), its live tool and MCP
+catalogs, the agents it has discovered, and where its instructions come from —
+so it always knows how to use every feature.
 
 The protocol is deliberately plain text so small local models can follow it —
 one fenced block per turn:

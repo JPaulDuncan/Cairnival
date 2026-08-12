@@ -1,0 +1,78 @@
+{% extends "base.html" %}
+{% import "_rail.html" as railmod %}
+{% block title %}MCP — {{ cfg.name }}{% endblock %}
+{% block brand %}{{ cfg.name }}{% endblock %}
+{% block tagline %}MCP servers{% endblock %}
+{% block nav %}{% endblock %}
+{% block content %}
+<div class="app">
+  {{ railmod.rail(cfg, "/mcp-servers") }}
+  <main class="column">
+
+<p class="label">
+  {{ cfg.name }} serves its own shared tools as MCP at <code>POST /mcp</code> —
+  any MCP client (another agent, Claude, Codex) can use them. Below are the MCP
+  servers this agent <em>consumes</em>; their tools become
+  <code>mcp:server/tool</code> actions it can call while it works.
+</p>
+
+<h2>Servers this agent consumes ({{ servers | length }})</h2>
+{% if servers %}
+<table>
+  <tr><th>name</th><th>transport</th><th>endpoint</th><th></th></tr>
+  {% for s in servers %}
+  <tr>
+    <td><strong>{{ s.name }}</strong></td>
+    <td>{{ s.transport }}</td>
+    <td><code>{{ s.url or (s.command ~ ' ' ~ (s.args | join(' '))) }}</code></td>
+    <td>
+      <form class="inline" method="post" action="/mcp-servers/remove">
+        <input type="hidden" name="name" value="{{ s.name }}">
+        <button class="quiet">remove</button>
+      </form>
+    </td>
+  </tr>
+  {% endfor %}
+</table>
+
+<h2>Tools reachable now ({{ tools | length }})</h2>
+{% if tools %}
+<div class="cards">
+  {% for t in tools %}
+  <div class="card">
+    {% if t.error %}
+      <h3>{{ t.server }}</h3><p class="label">unreachable — {{ t.error }}</p>
+    {% else %}
+      <h3>{{ t.server }}/{{ t.name }}</h3><p>{{ t.description }}</p>
+      <div class="specimen-label">call with <code>mcp:{{ t.server }}/{{ t.name }}</code></div>
+    {% endif %}
+  </div>
+  {% endfor %}
+</div>
+{% else %}<p class="label">no tools listed yet</p>{% endif %}
+
+{% else %}
+<p><em>No MCP servers registered. Add one below — an HTTP endpoint (like another
+Cairnival agent's <code>/mcp</code>) or a stdio command.</em></p>
+{% endif %}
+
+<h2>Add a server</h2>
+<form method="post" action="/mcp-servers/add">
+  <label class="label">name</label>
+  <input name="name" placeholder="e.g. filesystem" required>
+  <label class="label">transport</label>
+  <select name="transport">
+    <option value="http">http (a URL)</option>
+    <option value="stdio">stdio (a command)</option>
+  </select>
+  <label class="label">url (http)</label>
+  <input name="url" placeholder="http://another-agent/mcp">
+  <label class="label">command + args (stdio)</label>
+  <input name="command" placeholder="npx">
+  <input name="args" placeholder="-y @modelcontextprotocol/server-filesystem /data/workspace">
+  <p><button>Add server</button></p>
+</form>
+
+  </main>
+</div>
+{% endblock %}

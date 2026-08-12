@@ -114,6 +114,30 @@ removes it). Humans can toggle and tune a surface from the tool's page too.
 Surfaces are listed under **Surfaces** in the nav and each lives at
 `/surface/<name>`. Running one is token-gated like any other tool invocation.
 
+## MCP — both ends
+
+Cairnival speaks the Model Context Protocol both ways.
+
+**Serving.** Every agent exposes its **shared** tools (subject to
+`TOOL_SHARING`) as an MCP server at `POST /mcp` — JSON-RPC 2.0 with
+`initialize`, `tools/list`, and `tools/call`. Any MCP client can use them: a
+sibling Cairnival agent, Claude Desktop, Codex. A tool's declared UI `inputs`
+become its MCP input schema; without them it takes a single `args` string.
+
+**Consuming.** An agent can register MCP servers and call their tools while it
+works. Two transports:
+
+* **http** — a URL (e.g. another agent's `/mcp`).
+* **stdio** — a command the agent spawns (e.g. `npx -y
+  @modelcontextprotocol/server-filesystem /data/workspace`); it's run for the
+  exchange and its whole process group is torn down after, so nothing lingers.
+
+Register servers on the **MCP** page (or in the agent's `mcp.json`, or via the
+`MCP_SERVERS=name=url` env shorthand). Registered tools appear in the model's
+briefing and are called with the `mcp:server/tool` action, JSON arguments in
+the block body. Building your own MCP server is just another tool the agent can
+write.
+
 ## Running, reading, and editing tools by hand
 
 The attach UI's **Tools** page lists every discovered tool, runs one with

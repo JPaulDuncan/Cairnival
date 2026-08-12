@@ -128,6 +128,12 @@ class AgentConfig:
         ]
     )
 
+    # MCP — the agent may consume external MCP servers (registered in the home's
+    # mcp.json, or by env shorthand here) and always serves its own shared tools
+    # as MCP at /mcp.
+    mcp_enabled: bool = True
+    mcp_servers: list[str] = field(default_factory=list)  # env shorthand: name=url
+
     @classmethod
     def from_env(cls) -> "AgentConfig":
         cfg = cls()
@@ -185,6 +191,8 @@ class AgentConfig:
         cfg.tools_output_limit = _env_int("TOOLS_OUTPUT_LIMIT", cfg.tools_output_limit)
         if _env("TOOLS_DENYLIST"):
             cfg.tools_denylist = _env_list("TOOLS_DENYLIST")
+        cfg.mcp_enabled = _env_bool("MCP_ENABLED", cfg.mcp_enabled)
+        cfg.mcp_servers = _env_list("MCP_SERVERS")
         return cfg
 
 

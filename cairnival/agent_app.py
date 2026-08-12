@@ -24,7 +24,7 @@ from fastapi import FastAPI, Form, HTTPException, Request
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
 
-from . import messages, messaging
+from . import mcp, messages, messaging
 from .avatar import avatar_svg
 from .config import AgentConfig
 from .federation import Envelope, Identity, verify
@@ -910,6 +910,97 @@ def create_app(cfg: AgentConfig | None = None) -> FastAPI:
             raise HTTPException(400, str(exc))
         return _redirect(request, "/")
 
+    # -- MCP: serve this agent's shared tools to any MCP client ------------
+    @app.post("/mcp")
+    async def mcp_endpoint(request: Request):
+        """A JSON-RPC 2.0 MCP endpoint exposing this agent's shared tools, so
+        other agents (and Claude/Codex/Desktop) can use them as MCP tools."""
+        c = current()
+        if not c.mcp_enabled:
+            raise HTTPException(404, "MCP is disabled on this agent")
+        try:
+            body = await request.json()
+        except Exception:
+            raise HTTPException(400, "expected a JSON-RPC request")
+        rid = body.get("id")
+        method = body.get("method", "")
+        params = body.get("params") or {}
+
+        # notifications carry no id and expect no response
+        if rid is None:
+            return JSONResponse({"ok": True}, status_code=202)
+
+        def ok(result: dict):
+            return {"jsonrpc": "2.0", "id": rid, "result": result}
+
+        def err(code: int, message: str):
+            return {"jsonrpc": "2.0", "id": rid, "error": {"code": code, "message": message}}
+
+        memory = open_memory(c)
+        registry = ToolRegistry(memory.tools_dir, memory.workspace_dir, c)
+        registry.discover()
+        shared = registry.shared_tools(c.tool_sharing)
+
+        if method == "initialize":
+            return ok({
+                "protocolVersion": mcp.PROTOCOL_VERSION,
+                "capabilities": {"tools": {}},
+                "serverInfo": {"name": f"cairnival:{c.name}", "version": "1"},
+            })
+        if method == "tools/list":
+            return ok({"tools": [mcp.tool_to_mcp(t) for t in shared]})
+        if method == "tools/call":
+            name = str(params.get("name", ""))
+            tool = next((t for t in shared if t.name == name), None)
+            if tool is None:
+                return ok({"content": [{"type": "text", "text": f"no shared tool '{name}'"}], "isError": True})
+            ran_ok, text = mcp.call_shared_tool(registry, tool, params.get("arguments") or {})
+            return ok({"content": [{"type": "text", "text": text}], "isError": not ran_ok})
+        return err(-32601, f"method not found: {method}")
+
+    # -- MCP client: servers this agent consumes ---------------------------
+    @app.get("/mcp-servers", response_class=HTMLResponse)
+    def mcp_servers_page(request: Request):
+        c = current()
+        memory = open_memory(c)
+        reg = mcp.MCPRegistry(memory.mcp_path, c)
+        reg.load()
+        return templates.TemplateResponse(
+            request,
+            "agent_mcp.html",
+            {"cfg": c, "servers": reg.servers, "tools": reg.list_tools() if reg.servers else []},
+        )
+
+    @app.post("/mcp-servers/add")
+    def mcp_servers_add(
+        request: Request,
+        name: str = Form(...),
+        transport: str = Form("http"),
+        url: str = Form(""),
+        command: str = Form(""),
+        args: str = Form(""),
+    ):
+        check_token(request)
+        memory = open_memory(current())
+        reg = mcp.MCPRegistry(memory.mcp_path, current())
+        reg.load()
+        reg.add(mcp.MCPServerConfig(
+            name=name.strip(),
+            transport=transport.strip() or "http",
+            url=url.strip().rstrip("/"),
+            command=command.strip(),
+            args=args.split(),
+        ))
+        return _redirect(request, "/mcp-servers")
+
+    @app.post("/mcp-servers/remove")
+    def mcp_servers_remove(request: Request, name: str = Form(...)):
+        check_token(request)
+        memory = open_memory(current())
+        reg = mcp.MCPRegistry(memory.mcp_path, current())
+        reg.remove(name.strip())
+        return _redirect(request, "/mcp-servers")
+
     # -- machine interfaces ------------------------------------------------
     @app.get("/api/status")
     def api_status():
@@ -1209,6 +1300,7 @@ def create_app(cfg: AgentConfig | None = None) -> FastAPI:
                     sender=env.sender,
                     # a reply is terminal; a fresh message earns one answer back
                     reply_to="" if is_reply else env.sender,
+                    respond_with=str(env.body.get("respond_with", "")),
                     priority=6,
                 ),
             )

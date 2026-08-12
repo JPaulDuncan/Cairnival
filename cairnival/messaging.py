@@ -37,10 +37,13 @@ def deliver_note(
     reply: bool = False,
     in_reply_to: str = "",
     title: str = "",
+    respond_with: str = "",
 ) -> tuple[bool, str]:
     """Send a signed note to ``to_handle``. Returns (ok, how).
 
-    ``how`` is one of: direct, relayed, held, undeliverable.
+    ``how`` is one of: direct, relayed, held, undeliverable. ``respond_with``
+    carries a response-format contract the recipient is asked to honor when it
+    answers.
     """
     body: dict[str, object] = {"text": text}
     if reply:
@@ -49,6 +52,8 @@ def deliver_note(
         body["in_reply_to"] = in_reply_to
     if title:
         body["title"] = title
+    if respond_with:
+        body["respond_with"] = respond_with
     env = seal(identity, "note", body)
     payload = env.to_dict()
 

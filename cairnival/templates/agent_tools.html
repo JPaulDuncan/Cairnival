@@ -1,9 +1,13 @@
 {% extends "base.html" %}
+{% import "_rail.html" as railmod %}
 {% block title %}Tools — {{ cfg.name }}{% endblock %}
 {% block brand %}{{ cfg.name }}{% endblock %}
 {% block tagline %}the workbench{% endblock %}
-{% block nav %}<a href="/">dashboard</a><a href="/specimens">specimens</a><a href="/settings">settings</a>{% endblock %}
+{% block nav %}{% endblock %}
 {% block content %}
+<div class="app">
+  {{ railmod.rail(cfg, "/tools") }}
+  <main class="column">
 
 <p class="label">
   tools live in the agent's data dir and are rediscovered every wake ·
@@ -50,4 +54,6 @@ command below and watch it work.</em></p>
 <pre>{{ output }}</pre>
 {% endif %}
 
+  </main>
+</div>
 {% endblock %}

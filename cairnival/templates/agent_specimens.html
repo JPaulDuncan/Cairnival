@@ -1,9 +1,13 @@
 {% extends "base.html" %}
+{% import "_rail.html" as railmod %}
 {% block title %}Specimens — {{ cfg.name }}{% endblock %}
 {% block brand %}{{ cfg.name }}{% endblock %}
 {% block tagline %}specimen drawer{% endblock %}
-{% block nav %}<a href="/">dashboard</a>{% endblock %}
+{% block nav %}{% endblock %}
 {% block content %}
+<div class="app">
+  {{ railmod.rail(cfg, "/specimens") }}
+  <main class="column">
 <div class="cards">
   {% for s in specimens %}
   <div class="card">
@@ -18,5 +22,7 @@
   {% else %}
   <p><em>The drawer is empty.</em></p>
   {% endfor %}
+</div>
+  </main>
 </div>
 {% endblock %}

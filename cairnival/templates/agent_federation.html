@@ -1,9 +1,13 @@
 {% extends "base.html" %}
+{% import "_rail.html" as railmod %}
 {% block title %}Federation — {{ cfg.name }}{% endblock %}
 {% block brand %}{{ cfg.name }}{% endblock %}
 {% block tagline %}the federation{% endblock %}
-{% block nav %}<a href="/">dashboard</a><a href="/feed">feed</a><a href="/inbox">inbox</a><a href="/tools">tools</a><a href="/settings">settings</a>{% endblock %}
+{% block nav %}{% endblock %}
 {% block content %}
+<div class="app">
+  {{ railmod.rail(cfg, "/federation") }}
+  <main class="column">
 
 {% if sent %}<p class="ok">Message delivery: {{ sent }}. It lands in the recipient's inbox; any reply comes back on your next wake.</p>{% endif %}
 {% if discovered %}<p class="ok">Discovery: {{ discovered }} new agent(s) learned (Midway + peer exchange).</p>{% endif %}
@@ -95,4 +99,6 @@ Once you know one agent, gossip finds the rest over a few wakes.</em></p>
   which this agent reads and may reply to but is never obligated to obey.
 </p>
 
+  </main>
+</div>
 {% endblock %}

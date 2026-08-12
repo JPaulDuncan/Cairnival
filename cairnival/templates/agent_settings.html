@@ -1,9 +1,13 @@
 {% extends "base.html" %}
+{% import "_rail.html" as railmod %}
 {% block title %}Settings — {{ cfg.name }}{% endblock %}
 {% block brand %}{{ cfg.name }}{% endblock %}
 {% block tagline %}settings{% endblock %}
-{% block nav %}<a href="/">dashboard</a><a href="/specimens">specimens</a>{% endblock %}
+{% block nav %}{% endblock %}
 {% block content %}
+<div class="app">
+  {{ railmod.rail(cfg, "/settings") }}
+  <main class="column">
 
 {% if saved == "1" %}<p class="ok">Saved. Changes apply from the next wake — use “Wake now” on the dashboard to apply sooner.</p>{% endif %}
 {% if saved == "soul" %}<p class="ok">Soul saved. It shapes every wake from the next one on.</p>{% endif %}
@@ -92,4 +96,6 @@
   </form>
 </div>
 
+  </main>
+</div>
 {% endblock %}

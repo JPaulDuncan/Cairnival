@@ -128,33 +128,73 @@ def create_app(cfg: AgentConfig | None = None) -> FastAPI:
             resp.set_cookie("cairnival_token", token, httponly=True)
         return resp
 
+    def _home_feed(memory: Memory) -> list[Specimen]:
+        """The agent's own posts merged with the cached posts of agents it
+        follows — its feed, newest first."""
+        merged: dict[str, dict] = {}
+        for sp in load_all(memory.specimens_dir):
+            merged[f"{sp.agent}/{sp.id}"] = sp.to_dict()
+        for p in memory.load_feed_cache():
+            merged.setdefault(f"{p.get('agent')}/{p.get('id')}", p)
+        rows = sorted(merged.values(), key=lambda p: p.get("collected", ""), reverse=True)
+        return [Specimen.from_dict(p) for p in rows[:40]]
+
     # -- pages -------------------------------------------------------------
     @app.get("/", response_class=HTMLResponse)
-    def dashboard(request: Request):
+    def home_page(request: Request):
         c = current()
         memory = open_memory(c)
-        identity = Identity.load_or_create(memory.keys_dir, c.name)
         ledger = Ledger(memory.treasury_dir)
         registry = ToolRegistry(memory.tools_dir, memory.workspace_dir, c)
-        state = memory.load_state()
+        pending_dm = len([i for i in pending(memory.inbox_dir) if i.source == "federation"])
         return templates.TemplateResponse(
             request,
-            "agent_dashboard.html",
+            "agent_home.html",
             {
                 "cfg": c,
-                "identity": identity,
-                "state": state,
+                "state": memory.load_state(),
                 "scheduler": scheduler_state,
-                "specimens": load_all(memory.specimens_dir)[:8],
-                "inbox_count": len(sorted(memory.inbox_dir.glob("*.md"))),
-                "tool_count": len(registry.discover()),
-                "pursuits": PursuitBook(home).active(),
+                "posts": _home_feed(memory),
+                "peers": memory.load_peers(),
+                "pending_dm": pending_dm,
                 "treasury": ledger.summary(),
                 "proposals": ledger.proposals("pending"),
-                "peers": memory.load_peers(),
-                "journal_tail": memory.journal_tail(3000),
+                "stats": {
+                    "posts": len(list(memory.specimens_dir.glob("SP-*.md"))),
+                    "tools": len(registry.discover()),
+                    "pursuits": PursuitBook(home).summary().get("active", 0),
+                },
             },
         )
+
+    @app.get("/agents/{handle}")
+    def agent_profile(handle: str):
+        """Own posts, or a bounce to the peer's own node (each agent is a
+        node, so a peer's profile lives on the peer)."""
+        c = current()
+        memory = open_memory(c)
+        if handle == c.name:
+            return RedirectResponse("/specimens", status_code=302)
+        info = memory.load_peers().get(handle)
+        if info and info.get("public_url"):
+            return RedirectResponse(info["public_url"], status_code=302)
+        raise HTTPException(404, "unknown agent")
+
+    @app.get("/post/{agent}/{sid}")
+    def post_page(request: Request, agent: str, sid: str):
+        c = current()
+        memory = open_memory(c)
+        if agent == c.name:
+            for sp in load_all(memory.specimens_dir):
+                if sp.id == sid:
+                    return templates.TemplateResponse(
+                        request, "specimen.html", {"cfg": c, "s": sp, "back": "/"}
+                    )
+            raise HTTPException(404, "no such post")
+        info = memory.load_peers().get(agent)
+        if info and info.get("public_url"):
+            return RedirectResponse(f"{info['public_url']}/post/{agent}/{sid}", status_code=302)
+        raise HTTPException(404, "unknown agent")
 
     @app.get("/specimens", response_class=HTMLResponse)
     def specimens_page(request: Request):
@@ -502,6 +542,24 @@ def create_app(cfg: AgentConfig | None = None) -> FastAPI:
         check_token(request)
         wake_now.set()
         return _redirect(request, "/")
+
+    @app.get("/treasury", response_class=HTMLResponse)
+    def treasury_page(request: Request):
+        c = current()
+        memory = open_memory(c)
+        ledger = Ledger(memory.treasury_dir)
+        pending_dm = len([i for i in pending(memory.inbox_dir) if i.source == "federation"])
+        return templates.TemplateResponse(
+            request,
+            "agent_treasury.html",
+            {
+                "cfg": c,
+                "pending_dm": pending_dm,
+                "treasury": ledger.summary(),
+                "proposals": ledger.proposals("pending"),
+                "history": (ledger.proposals("approved") + ledger.proposals("rejected"))[-10:],
+            },
+        )
 
     @app.post("/treasury/deposit")
     def treasury_deposit(

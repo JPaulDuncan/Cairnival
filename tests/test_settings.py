@@ -27,14 +27,14 @@ def test_overrides_win_over_base(tmp_path):
             "tagline": "changed in the UI",
             "wake_interval_minutes": 5,
             "peers": ["http://moth:8700"],
-            "email_enabled": True,
+            "remember_enabled": True,
         },
     )
     loaded = load_agent_config(cfg)
     assert loaded.tagline == "changed in the UI"
     assert loaded.wake_interval_minutes == 5
     assert loaded.peers == ["http://moth:8700"]
-    assert loaded.email_enabled is True
+    assert loaded.remember_enabled is True
     # base object untouched; process-level fields never overridden
     assert cfg.tagline != "changed in the UI"
     assert loaded.home == cfg.home
@@ -55,16 +55,16 @@ def test_bad_or_process_only_overrides_ignored(tmp_path):
 def test_apply_form_secrets_blank_keeps_dash_clears(tmp_path):
     home = tmp_path / "agent"
     home.mkdir()
-    apply_form(home, {"imap_password": "hunter2", "tagline": "one"})
-    assert read_overrides(home)["imap_password"] == "hunter2"
+    apply_form(home, {"webhook_token": "hunter2", "tagline": "one"})
+    assert read_overrides(home)["webhook_token"] == "hunter2"
     # blank secret keeps the stored value
-    apply_form(home, {"imap_password": "", "tagline": "two"})
+    apply_form(home, {"webhook_token": "", "tagline": "two"})
     data = read_overrides(home)
-    assert data["imap_password"] == "hunter2"
+    assert data["webhook_token"] == "hunter2"
     assert data["tagline"] == "two"
     # the sentinel clears it
-    apply_form(home, {"imap_password": "-"})
-    assert read_overrides(home)["imap_password"] == ""
+    apply_form(home, {"webhook_token": "-"})
+    assert read_overrides(home)["webhook_token"] == ""
 
 
 def test_settings_page_and_save_apply_live(tmp_path):

@@ -74,14 +74,32 @@ GROUPS: list[Group] = [
                 "llm_backend",
                 "Backend",
                 "choice",
-                ("echo", "ollama", "llamacpp", "llamacpp-cli"),
-                help="echo needs no model; llamacpp means a running llama-server",
+                ("echo", "ollama", "llamacpp", "llamacpp-cli", "claude-cli", "codex-cli"),
+                help=(
+                    "echo needs no model; llamacpp means a running llama-server; "
+                    "claude-cli/codex-cli drive a coding-agent CLI as the mind"
+                ),
             ),
             Field("ollama_url", "Ollama URL"),
             Field("ollama_model", "Ollama model"),
             Field("llamacpp_url", "llama-server URL"),
             Field("llamacpp_bin", "llama-cli binary"),
             Field("llamacpp_model_path", "GGUF model path (CLI backend)"),
+            Field(
+                "claude_bin",
+                "Claude CLI path",
+                help="the `claude` executable, for LLM_BACKEND=claude-cli",
+            ),
+            Field(
+                "codex_bin",
+                "Codex CLI path",
+                help="the `codex` executable, for LLM_BACKEND=codex-cli",
+            ),
+            Field(
+                "cli_extra_args",
+                "CLI extra args",
+                help="extra flags appended to the claude/codex command",
+            ),
             Field("llm_timeout_seconds", "Timeout (seconds)", "int"),
             Field("llm_max_tokens", "Max tokens", "int"),
             Field(
@@ -102,27 +120,6 @@ GROUPS: list[Group] = [
         [
             Field("hub_url", "Hub URL", help="empty = publish nowhere, run alone"),
             Field("public_url", "This agent's public URL (how peers reach it)"),
-        ],
-    ),
-    Group(
-        "Email instructions",
-        [
-            Field("email_enabled", "Poll email each wake", "bool"),
-            Field("imap_host", "IMAP host"),
-            Field("imap_port", "IMAP port", "int"),
-            Field("imap_user", "IMAP user"),
-            Field("imap_password", "IMAP password", "secret"),
-            Field(
-                "email_allowlist",
-                "Allowed senders",
-                "list",
-                help="comma-separated; only these addresses can instruct by mail",
-            ),
-            Field("smtp_host", "SMTP host"),
-            Field("smtp_port", "SMTP port", "int"),
-            Field("smtp_user", "SMTP user"),
-            Field("smtp_password", "SMTP password", "secret"),
-            Field("smtp_from", "From address"),
         ],
     ),
     Group(

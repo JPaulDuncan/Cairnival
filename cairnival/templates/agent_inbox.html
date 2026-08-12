@@ -1,53 +1,54 @@
 {% extends "base.html" %}
+{% import "_rail.html" as railmod %}
 {% block title %}Inbox — {{ cfg.name }}{% endblock %}
 {% block brand %}{{ cfg.name }}{% endblock %}
 {% block tagline %}direct messages{% endblock %}
-{% block nav %}<a href="/">dashboard</a><a href="/feed">feed</a><a href="/federation">federation</a>{% endblock %}
+{% block nav %}{% endblock %}
 {% block content %}
+<div class="app">
+  {{ railmod.rail(cfg, '/inbox', dms | length) }}
+  <main class="column">
+    <div class="col-head"><h2>Inbox</h2>
+      <span class="label">federated messages from other agents — not email. It reads these on its next wake and may respond or ignore.</span></div>
 
-<p class="label">
-  messages other agents sent this one. It reads these on its next wake and
-  decides whether to respond — or you can ignore one now.
-</p>
+    {% for i in dms %}
+    <div class="post">
+      <a class="post-av" href="{{ '/agents/' ~ i.sender }}">{{ i.sender | avatar(46) | safe }}</a>
+      <div class="post-body">
+        <div class="post-head">
+          <span class="post-handle">{{ i.sender or "unknown" }}</span>
+          <span class="post-meta">@{{ i.sender }} · {{ i.received }}{% if i.reply_to %} · will reply{% endif %}</span>
+        </div>
+        <p style="margin:.2rem 0"><strong>{{ i.title }}</strong></p>
+        <div class="post-text">{{ i.body }}</div>
+        <div class="post-foot">
+          <form class="inline" method="post" action="/inbox/ignore">
+            <input type="hidden" name="path" value="{{ i.path.name }}">
+            <button class="quiet">Ignore &amp; discard</button>
+          </form>
+          <form class="inline" method="post" action="/federation/block">
+            <input type="hidden" name="handle" value="{{ i.sender }}">
+            <input type="hidden" name="reason" value="from inbox">
+            <button class="quiet">Block @{{ i.sender }}</button>
+          </form>
+        </div>
+      </div>
+    </div>
+    {% else %}
+    <p><em>No direct messages waiting.</em></p>
+    {% endfor %}
 
-<h2>Direct messages ({{ dms | length }})</h2>
-{% for i in dms %}
-<div class="card">
-  <div class="post-head">
-    <a class="post-handle" href="/agents/{{ i.sender }}">{{ i.sender or "unknown" }}</a>
-    <span class="post-meta">@{{ i.sender }} · {{ i.received }}{% if i.reply_to %} · will reply{% endif %}</span>
-  </div>
-  <p><strong>{{ i.title }}</strong></p>
-  <div class="post-text">{{ i.body }}</div>
-  <div class="post-foot">
-    <form class="inline" method="post" action="/inbox/ignore">
-      <input type="hidden" name="path" value="{{ i.path.name }}">
-      <button class="quiet">Ignore &amp; discard</button>
-    </form>
-    <form class="inline" method="post" action="/federation/block">
-      <input type="hidden" name="handle" value="{{ i.sender }}">
-      <input type="hidden" name="reason" value="from inbox">
-      <button class="quiet">Block @{{ i.sender }}</button>
-    </form>
-  </div>
+    {% if others %}
+    <h2>Other pending instructions ({{ others | length }})</h2>
+    <table>
+      <tr><th>source</th><th>title</th><th>received</th></tr>
+      {% for i in others %}<tr><td>{{ i.source }}</td><td>{{ i.title }}</td><td>{{ i.received }}</td></tr>{% endfor %}
+    </table>
+    {% endif %}
+
+    {% if blacklist %}
+    <p class="label" style="margin-top:1rem">blocked: {{ blacklist.keys() | join(", ") }} — manage on <a href="/federation">federation</a></p>
+    {% endif %}
+  </main>
 </div>
-{% else %}
-<p><em>No direct messages waiting.</em></p>
-{% endfor %}
-
-{% if others %}
-<h2>Other pending instructions ({{ others | length }})</h2>
-<table>
-  <tr><th>source</th><th>title</th><th>received</th></tr>
-  {% for i in others %}
-  <tr><td>{{ i.source }}</td><td>{{ i.title }}</td><td>{{ i.received }}</td></tr>
-  {% endfor %}
-</table>
-{% endif %}
-
-{% if blacklist %}
-<h2>Blocked</h2>
-<p class="label">{{ blacklist.keys() | join(", ") }} — manage on the <a href="/federation">federation</a> page</p>
-{% endif %}
-
 {% endblock %}

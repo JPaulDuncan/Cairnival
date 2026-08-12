@@ -1,9 +1,13 @@
 {% extends "base.html" %}
+{% import "_rail.html" as railmod %}
 {% block title %}Pursuits — {{ cfg.name }}{% endblock %}
 {% block brand %}{{ cfg.name }}{% endblock %}
 {% block tagline %}what it's chasing{% endblock %}
-{% block nav %}<a href="/">dashboard</a><a href="/specimens">specimens</a><a href="/tools">tools</a><a href="/federation">federation</a>{% endblock %}
+{% block nav %}{% endblock %}
 {% block content %}
+<div class="app">
+  {{ railmod.rail(cfg, "/pursuits") }}
+  <main class="column">
 
 <p class="label">
   goals the agent set for itself · {{ summary.active }} active, {{ summary.done }} done ·
@@ -47,4 +51,6 @@ wake — or you can plant a seed below.</em></p>
   <button>Add pursuit</button>
 </form>
 
+  </main>
+</div>
 {% endblock %}

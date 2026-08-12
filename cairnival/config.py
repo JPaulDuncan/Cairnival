@@ -74,19 +74,6 @@ class AgentConfig:
     ui_token: str = ""  # empty = open (dev only)
     public_url: str = ""  # how peers/hub reach this agent, e.g. http://agent-a:8700
 
-    # Email instructions (IMAP in, SMTP out)
-    email_enabled: bool = False
-    imap_host: str = ""
-    imap_port: int = 993
-    imap_user: str = ""
-    imap_password: str = ""
-    email_allowlist: list[str] = field(default_factory=list)
-    smtp_host: str = ""
-    smtp_port: int = 587
-    smtp_user: str = ""
-    smtp_password: str = ""
-    smtp_from: str = ""
-
     # Treasury
     chain: str = "dryrun"  # dryrun | solana (adapter stub)
     ask_price: float = 0.02  # minimum paid-memo deposit that becomes an instruction
@@ -165,17 +152,6 @@ class AgentConfig:
         cfg.ui_port = _env_int("UI_PORT", cfg.ui_port)
         cfg.ui_token = _env("UI_TOKEN", cfg.ui_token)
         cfg.public_url = _env("PUBLIC_URL", cfg.public_url).rstrip("/")
-        cfg.email_enabled = _env_bool("EMAIL_ENABLED", cfg.email_enabled)
-        cfg.imap_host = _env("IMAP_HOST", cfg.imap_host)
-        cfg.imap_port = _env_int("IMAP_PORT", cfg.imap_port)
-        cfg.imap_user = _env("IMAP_USER", cfg.imap_user)
-        cfg.imap_password = _env("IMAP_PASSWORD", cfg.imap_password)
-        cfg.email_allowlist = [a.lower() for a in _env_list("EMAIL_ALLOWLIST")]
-        cfg.smtp_host = _env("SMTP_HOST", cfg.smtp_host)
-        cfg.smtp_port = _env_int("SMTP_PORT", cfg.smtp_port)
-        cfg.smtp_user = _env("SMTP_USER", cfg.smtp_user)
-        cfg.smtp_password = _env("SMTP_PASSWORD", cfg.smtp_password)
-        cfg.smtp_from = _env("SMTP_FROM", cfg.smtp_from)
         cfg.chain = _env("CHAIN", cfg.chain).lower()
         try:
             cfg.ask_price = float(_env("ASK_PRICE", str(cfg.ask_price)))

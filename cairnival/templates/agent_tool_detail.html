@@ -1,9 +1,13 @@
 {% extends "base.html" %}
+{% import "_rail.html" as railmod %}
 {% block title %}{{ tool.name }} — {{ cfg.name }}{% endblock %}
 {% block brand %}{{ cfg.name }}{% endblock %}
 {% block tagline %}tool: {{ tool.name }}{% endblock %}
-{% block nav %}<a href="/tools">tools</a><a href="/">dashboard</a>{% endblock %}
+{% block nav %}{% endblock %}
 {% block content %}
+<div class="app">
+  {{ railmod.rail(cfg, "/tools") }}
+  <main class="column">
 
 {% if saved %}<p class="ok">Saved. The updated tool is live now and on every future wake.</p>{% endif %}
 
@@ -36,4 +40,6 @@
   <button class="quiet">Delete this tool</button>
 </form>
 
+  </main>
+</div>
 {% endblock %}

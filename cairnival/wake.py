@@ -2,13 +2,17 @@
 
     wake:
       1. open your eyes: load state, soul, journal tail
-      2. read everything addressed to you: inbox files, email, paid memos,
-         federation mail already dropped by the web app, connector gatherings
+      2. read everything addressed to you: inbox files, paid memos, federation
+         mail (DMs) already dropped by the web app, connector gatherings
       3. work each instruction against the local LLM
       4. write one specimen — the blog entry about this wake
       5. publish it to the Midway (queue in outbox on failure, retry next wake)
-      6. answer email that asked, greet the peers you know
+      6. answer federation mail that asked, greet the peers you know
       7. write the journal line, save state, sleep
+
+Email is deliberately not built in: the inbox is federated agent-to-agent
+messaging, not SMTP. If an agent needs real email it builds a tool for it (or
+signs up for a service) on its own — see the soul.
 
 The agent remembers nothing between wakes except these files.
 """
@@ -22,7 +26,7 @@ from typing import Any
 
 import httpx
 
-from . import agentloop, email_source, messaging
+from . import agentloop, messaging
 from .config import AgentConfig
 from .connectors import BaseConnector, load_connectors
 from .federation import Envelope, Identity, seal, verify
@@ -453,13 +457,6 @@ def run_wake(cfg: AgentConfig) -> WakeReport:
         ctx.note(f"discovered {len(discovered)} tool(s): {', '.join(discovered)}")
 
     # 2. read everything addressed to us ----------------------------------
-    try:
-        for ins in email_source.fetch_instructions(cfg):
-            drop(memory.inbox_dir, ins)
-            ctx.note(f"email from {ins.sender}: {ins.title}")
-    except Exception as exc:
-        ctx.note(f"email poll failed: {exc}")
-
     _register_with_hub(ctx)
     _discover_peers(ctx)
     _fetch_hub_mail(ctx)
@@ -480,7 +477,7 @@ def run_wake(cfg: AgentConfig) -> WakeReport:
     # 3. work -------------------------------------------------------------
     queue = pending(memory.inbox_dir)[: cfg.max_instructions_per_wake]
     worked: list[dict[str, str]] = []
-    replies: list[tuple[str, str, str]] = []  # (channel, address, answer)
+    replies: list[tuple[str, str]] = []  # (peer handle, answer) — federation only
     tools_written: list[str] = []
     tools_used: list[str] = []
     for ins in queue:
@@ -488,9 +485,8 @@ def run_wake(cfg: AgentConfig) -> WakeReport:
         worked.append(result)
         tools_written.extend(result.get("tools_written", []))
         tools_used.extend(result.get("tools_used", []))
-        if ins.reply_to:
-            channel = "federation" if ins.source == "federation" else "email"
-            replies.append((channel, ins.reply_to, result["answer"]))
+        if ins.reply_to and ins.source == "federation":
+            replies.append((ins.reply_to, result["answer"]))
         archive(ins, memory.archive_dir)
 
     handled = len(worked)  # count of instructions others gave the agent
@@ -513,23 +509,9 @@ def run_wake(cfg: AgentConfig) -> WakeReport:
     _publish(ctx, specimen)
 
     # 6. answer mail, greet peers ------------------------------------------
-    for channel, address, answer in replies:
-        if channel == "federation":
-            ok, how = messaging.deliver_note(
-                cfg, identity, memory, address, answer, reply=True
-            )
-            ctx.note(
-                f"replied to {address} over federation: "
-                f"{how if ok else 'undeliverable'}"
-            )
-        else:
-            sent = email_source.send_reply(
-                cfg,
-                address,
-                f"[{cfg.name}] {specimen.title}",
-                answer + f"\n\n— {cfg.name}, wake {wake_number}",
-            )
-            ctx.note(f"reply to {address}: {'sent' if sent else 'failed/skipped'}")
+    for handle, answer in replies:
+        ok, how = messaging.deliver_note(cfg, identity, memory, handle, answer, reply=True)
+        ctx.note(f"replied to {handle} over federation: {how if ok else 'undeliverable'}")
     for connector in connectors:
         try:
             connector.deliver(ctx, specimen)

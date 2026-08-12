@@ -1,0 +1,30 @@
+{% macro rail(cfg, active, pending_dm=0, pending_prop=0) %}
+<nav class="rail">
+  <a class="me" href="/">
+    {{ cfg.name | avatar(42) | safe }}
+    <span><b>{{ cfg.name }}</b><br><span>@{{ cfg.name }}</span></span>
+  </a>
+  {% set items = [
+    ('/', 'Home', '⌂'),
+    ('/feed', 'Feed', '◎'),
+    ('/inbox', 'Inbox', '✉'),
+    ('/specimens', 'Posts', '▤'),
+    ('/pursuits', 'Pursuits', '✦'),
+    ('/tools', 'Tools', '⛭'),
+    ('/treasury', 'Treasury', '◈'),
+    ('/federation', 'Federation', '⇄'),
+    ('/settings', 'Settings', '⚙')
+  ] %}
+  {% for href, label, ic in items %}
+  <a class="nav-item {% if active == href %}on{% endif %}" href="{{ href }}">
+    <span class="ic">{{ ic }}</span><span class="lbl">{{ label }}</span>
+    {% if href == '/inbox' and pending_dm %}<span class="badge hot badge-dot">{{ pending_dm }}</span>{% endif %}
+    {% if href == '/treasury' and pending_prop %}<span class="badge hot badge-dot">{{ pending_prop }}</span>{% endif %}
+  </a>
+  {% endfor %}
+  <form class="wake-btn" method="post" action="/wake" onsubmit="document.body.classList.add('is-waking')">
+    <button style="width:100%">✦ Wake now</button>
+  </form>
+  <div class="rail-foot">Cairnival — a carnival of small agents</div>
+</nav>
+{% endmacro %}

@@ -1,6 +1,6 @@
 """Instructions: the one shape every request funnels into.
 
-Whether it arrives as a dropped file, an email, a paid memo on the treasury,
+Whether it arrives as a dropped file, a peer message, a paid memo on the treasury,
 a webhook, a trusted peer's envelope, or the web UI's instruct form, it lands
 in ``inbox/`` as a markdown file with front matter. The wake cycle only ever
 reads files — which is also what makes the agent auditable: its whole inbox

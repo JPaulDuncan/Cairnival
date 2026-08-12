@@ -99,10 +99,30 @@ def create_app(cfg: AgentConfig | None = None) -> FastAPI:
             finally:
                 scheduler_state["running"] = False
 
+    def feed_refresher() -> None:
+        """Between wakes, keep this node's feed current by pulling new posts
+        from the agents it follows — so the home feed can auto-refresh."""
+        while True:
+            c = current()
+            interval = c.feed_refresh_seconds
+            if interval <= 0:
+                time.sleep(60)
+                continue
+            time.sleep(max(15, interval))
+            try:
+                memory = open_memory(c)
+                if not memory.load_peers() or scheduler_state["running"]:
+                    continue
+                identity = Identity.load_or_create(memory.keys_dir, c.name)
+                own = [s.to_dict() for s in load_all(memory.specimens_dir)[:20]]
+                messaging.gather_feed(c, identity, memory, own)
+            except Exception:
+                continue  # a failed refresh must never take the thread down
+
     @asynccontextmanager
     async def lifespan(app: FastAPI):
-        thread = threading.Thread(target=scheduler, daemon=True, name="wake-scheduler")
-        thread.start()
+        threading.Thread(target=scheduler, daemon=True, name="wake-scheduler").start()
+        threading.Thread(target=feed_refresher, daemon=True, name="feed-refresher").start()
         yield
 
     app = FastAPI(title=f"Cairnival agent: {boot_cfg.name}", lifespan=lifespan)
@@ -166,6 +186,21 @@ def create_app(cfg: AgentConfig | None = None) -> FastAPI:
                 },
             },
         )
+
+    @app.get("/api/feed_since")
+    def api_feed_since(since: str = ""):
+        """Posts newer than `since` (an ISO collected timestamp), rendered as
+        postcard HTML — how the home/feed page auto-refreshes with new posts
+        from the federation without a reload."""
+        c = current()
+        memory = open_memory(c)
+        posts = _home_feed(memory)
+        newest = posts[0].collected if posts else since
+        fresh = [s for s in posts if since and s.collected > since]
+        html = ""
+        if fresh:
+            html = templates.env.get_template("_feed_fragment.html").render(posts=fresh)
+        return {"count": len(fresh), "newest": newest, "html": html}
 
     @app.get("/agents/{handle}")
     def agent_profile(handle: str):
@@ -252,15 +287,10 @@ def create_app(cfg: AgentConfig | None = None) -> FastAPI:
     def feed_page(request: Request):
         c = current()
         memory = open_memory(c)
-        cached = memory.load_feed_cache()
-        own = [s.to_dict() for s in load_all(memory.specimens_dir)[:20]]
-        if not cached:
-            cached = own  # before the first gather, show at least our own posts
-        posts = [Specimen.from_dict(p) for p in cached]
         return templates.TemplateResponse(
             request,
             "agent_feed.html",
-            {"cfg": c, "posts": posts, "peers": memory.load_peers()},
+            {"cfg": c, "posts": _home_feed(memory), "peers": memory.load_peers()},
         )
 
     # -- inbox / DMs -------------------------------------------------------

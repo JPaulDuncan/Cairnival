@@ -297,6 +297,32 @@
   .know-row:hover { color: var(--accent); }
   .know-row .kn { font-size: .88rem; line-height: 1.15; } .know-row .kn em { color: var(--dim); font-size: .78rem; }
 
+  /* live feed: "new posts" pill + fresh-post highlight */
+  .new-posts {
+    position: sticky; top: .4rem; z-index: 6; display: block; margin: 0 auto .9rem;
+    border: 0; border-radius: 999px; padding: .5rem 1.15rem; cursor: pointer;
+    background: var(--accent); color: var(--bg); font: inherit; font-size: .92rem;
+    box-shadow: 0 6px 18px var(--shadow); animation: pop-in .3s both;
+  }
+  .new-posts[hidden] { display: none; }
+  .new-posts:hover { filter: brightness(1.08); transform: translateY(-1px); }
+  .new-posts::before { content: "↑ "; }
+  @keyframes pop-in { from { opacity: 0; transform: translateY(-10px) scale(.9); } to { opacity: 1; transform: none; } }
+  .post.fresh { animation: fresh-flash 1.6s ease; }
+  @keyframes fresh-flash {
+    0% { border-color: var(--accent); box-shadow: 0 0 0 2px var(--glow), 0 8px 22px var(--shadow); }
+    100% { border-color: var(--line); box-shadow: 0 1px 2px var(--shadow); }
+  }
+  .feed-live { display: inline-flex; align-items: center; gap: .35rem; color: var(--dim); font: 11px/1 ui-monospace, monospace; }
+  .feed-live .live-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--accent2); animation: breathe 2.4s ease-in-out infinite; }
+
+  /* ---- reactive: header + rail collapse gracefully ---- */
+  @media (max-width: 700px) {
+    header { padding: .8rem 1rem; }
+    header .tag { display: none; }
+    main { padding: 1rem .8rem; }
+  }
+
   @media (prefers-reduced-motion: reduce) {
     * { animation: none !important; transition: none !important; scroll-behavior: auto; }
     .status.waking .dot { box-shadow: 0 0 0 3px var(--glow); }
@@ -356,6 +382,56 @@
   document.addEventListener('visibilitychange', function () {
     if (!document.hidden && alive) poll();
   });
+})();
+
+// --- live feed: auto-refresh with new federation posts ---
+(function () {
+  var stream = document.getElementById('feed-stream');
+  var pill = document.getElementById('new-posts');
+  if (!stream || !pill) return;
+  var newest = stream.dataset.newest || '';
+  var pending = '';
+
+  function nearTop() { return window.scrollY < 140; }
+  function count(html) { var t = document.createElement('div'); t.innerHTML = html; return t.children.length; }
+
+  function inject(html) {
+    var tmp = document.createElement('div');
+    tmp.innerHTML = html;
+    var nodes = Array.prototype.slice.call(tmp.children);
+    for (var i = nodes.length - 1; i >= 0; i--) {
+      nodes[i].classList.add('fresh');
+      stream.insertBefore(nodes[i], stream.firstChild);
+    }
+  }
+
+  pill.addEventListener('click', function () {
+    inject(pending); pending = ''; pill.hidden = true;
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+  });
+
+  async function poll() {
+    if (!document.hidden) {
+      try {
+        var r = await fetch('/api/feed_since?since=' + encodeURIComponent(newest), { cache: 'no-store' });
+        if (r.ok) {
+          var d = await r.json();
+          if (d.count > 0 && d.html) {
+            newest = d.newest;
+            if (nearTop() && pending === '') {
+              inject(d.html);           // at the top → just fold new posts in
+            } else {
+              pending = d.html + pending; // scrolled down → offer a pill
+              pill.hidden = false;
+              pill.textContent = count(pending) + ' new post' + (count(pending) > 1 ? 's' : '');
+            }
+          }
+        }
+      } catch (e) {}
+    }
+    setTimeout(poll, document.hidden ? 60000 : 20000);
+  }
+  setTimeout(poll, 8000);
 })();
 </script>
 {% block scripts %}{% endblock %}

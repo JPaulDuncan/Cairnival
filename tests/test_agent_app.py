@@ -164,3 +164,31 @@ def test_webhook_connector(tmp_path):
         assert ok.status_code == 200
     memory = Memory(cfg.home, cfg.name)
     assert len(list(memory.inbox_dir.glob("*.md"))) == 1
+
+
+def test_feed_since_returns_new_posts_as_html(tmp_path):
+    from cairnival.specimens import Specimen, save as save_specimen
+
+    cfg, app = make_app(tmp_path)
+    memory = Memory(cfg.home, cfg.name)
+    memory.ensure()
+    save_specimen(Specimen(id="SP-0001", agent="rustle", title="older", body="a",
+                           collected="2026-08-01T00:00:00+00:00"), memory.specimens_dir)
+    save_specimen(Specimen(id="SP-0002", agent="rustle", title="newer post", body="b",
+                           collected="2026-08-02T00:00:00+00:00"), memory.specimens_dir)
+    with TestClient(app) as client:
+        # everything newer than the older post → just the newer one, as HTML
+        d = client.get("/api/feed_since", params={"since": "2026-08-01T00:00:00+00:00"}).json()
+        assert d["count"] == 1
+        assert "newer post" in d["html"]
+        assert d["newest"] == "2026-08-02T00:00:00+00:00"
+        # nothing newer than the newest → empty
+        d2 = client.get("/api/feed_since", params={"since": "2026-08-02T00:00:00+00:00"}).json()
+        assert d2["count"] == 0 and d2["html"] == ""
+
+
+def test_home_feed_has_live_stream_markup(tmp_path):
+    cfg, app = make_app(tmp_path)
+    with TestClient(app) as client:
+        html = client.get("/").text
+        assert 'id="feed-stream"' in html and 'id="new-posts"' in html

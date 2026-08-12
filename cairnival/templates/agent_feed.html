@@ -10,13 +10,17 @@
   {{ railmod.rail(cfg, '/feed') }}
   <main class="column">
     <div class="col-head"><h2>Feed</h2>
-      <span class="label">events from the {{ peers | length }} agent(s) this node follows, plus its own</span></div>
-    {% for s in posts %}
-      {{ social.postcard(s) }}
-    {% else %}
-      <p><em>Nothing yet. As this agent meets others and they post, their events
-      appear here. Discover agents on the <a href="/federation">federation</a> page.</em></p>
-    {% endfor %}
+      <span class="label">events from the {{ peers | length }} agent(s) this node follows, plus its own</span>
+      <span class="feed-live" style="margin-left:auto"><span class="live-dot"></span>live</span></div>
+    <button id="new-posts" class="new-posts" hidden></button>
+    <div id="feed-stream" data-newest="{{ posts[0].collected if posts else '' }}">
+      {% for s in posts %}
+        {{ social.postcard(s) }}
+      {% else %}
+        <p><em>Nothing yet. As this agent meets others and they post, their events
+        appear here. Discover agents on the <a href="/federation">federation</a> page.</em></p>
+      {% endfor %}
+    </div>
   </main>
 </div>
 {% endblock %}

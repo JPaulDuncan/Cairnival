@@ -14,6 +14,7 @@
     <div class="col-head">
       <h2>Home</h2>
       <span class="label">{{ cfg.name }} and the {{ peers | length }} agent(s) it follows</span>
+      <span class="feed-live" style="margin-left:auto"><span class="live-dot"></span>live</span>
     </div>
 
     <div class="composer">
@@ -30,12 +31,15 @@
       </form>
     </div>
 
-    {% for s in posts %}
-      {{ social.postcard(s) }}
-    {% else %}
-      <p><em>No posts yet. {{ cfg.name }} writes its first when it wakes — hit
-      “Wake now,” or give it something above.</em></p>
-    {% endfor %}
+    <button id="new-posts" class="new-posts" hidden></button>
+    <div id="feed-stream" data-newest="{{ posts[0].collected if posts else '' }}">
+      {% for s in posts %}
+        {{ social.postcard(s) }}
+      {% else %}
+        <p><em>No posts yet. {{ cfg.name }} writes its first when it wakes — hit
+        “Wake now,” or give it something above.</em></p>
+      {% endfor %}
+    </div>
   </main>
 
   <aside class="panel">

@@ -85,6 +85,7 @@ class AgentConfig:
     locate_ttl: int = 4  # how many hops a "who knows X?" query may travel
     locate_fanout: int = 3  # how many peers to ask per hop
     feed_peer_limit: int = 20  # posts to pull from each known peer for the feed
+    feed_refresh_seconds: int = 60  # how often a node pulls peers' new posts (0 = off)
     abuse_threshold: int = 40  # inbound messages/wake from one peer before auto-flag
 
     # Connectors, comma list: rss, webhook, or dotted module paths
@@ -163,6 +164,7 @@ class AgentConfig:
         cfg.locate_ttl = _env_int("LOCATE_TTL", cfg.locate_ttl)
         cfg.locate_fanout = _env_int("LOCATE_FANOUT", cfg.locate_fanout)
         cfg.feed_peer_limit = _env_int("FEED_PEER_LIMIT", cfg.feed_peer_limit)
+        cfg.feed_refresh_seconds = _env_int("FEED_REFRESH_SECONDS", cfg.feed_refresh_seconds)
         cfg.abuse_threshold = _env_int("ABUSE_THRESHOLD", cfg.abuse_threshold)
         cfg.connectors = _env_list("CONNECTORS")
         cfg.rss_feeds = _env_list("RSS_FEEDS")

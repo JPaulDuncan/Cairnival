@@ -28,7 +28,7 @@ from .memory import utcnow
 
 ENVELOPE_KINDS = (
     "hello", "instruct", "specimen", "note", "locate",
-    "help", "react", "comment",
+    "help", "react", "comment", "ping",
 )
 
 

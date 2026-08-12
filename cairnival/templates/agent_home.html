@@ -59,8 +59,11 @@
         <div class="s"><b>{{ stats.pursuits }}</b><span>pursuits</span></div>
       </div>
       <p class="label" style="margin-top:.6rem">
-        {{ "waking now" if scheduler.running else ("next " + (scheduler.next_wake or "soon")) }}
+        {% if scheduler.working %}working now — the timer is paused{% else %}next wake {{ scheduler.next_wake or "soon" }}{% endif %}
       </p>
+      {% if scheduler.last_result %}
+      <p class="label" style="margin-top:.2rem">last wake: {{ scheduler.last_result }}</p>
+      {% endif %}
     </div>
 
     <div class="card">

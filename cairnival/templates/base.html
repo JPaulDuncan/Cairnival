@@ -365,17 +365,27 @@
   var text = document.getElementById('agent-status-text');
   if (!pill) return;
   var alive = true;
+  var last = null;  // most recent status, repainted every second for a live countdown
 
   function paint(s) {
+    last = s;
     pill.hidden = false;
     var waking = !!s.waking_now;
     document.body.classList.toggle('is-waking', waking);
     pill.classList.toggle('waking', waking);
     pill.classList.toggle('idle', !waking);
     if (waking) {
-      text.innerHTML = 'thinking<span class="ellipsis"></span>';
+      // a wake session is alive; the interval timer is paused
+      text.innerHTML = 'working<span class="ellipsis"></span> · timer paused';
     } else {
-      var next = s.next_wake ? (' · next ' + s.next_wake.replace('in ~', '~')) : '';
+      var next = '';
+      if (s.next_wake_at) {
+        var secs = Math.max(0, Math.round(s.next_wake_at - (Date.now() / 1000)));
+        var m = Math.floor(secs / 60), ss = secs % 60;
+        next = ' · next in ' + (m > 0 ? m + 'm ' : '') + ss + 's';
+      } else if (s.next_wake) {
+        next = ' · next ' + s.next_wake.replace('in ~', '~');
+      }
       text.textContent = 'idle · ' + (s.wakes || 0) + ' wakes' + next;
     }
   }
@@ -395,6 +405,8 @@
     setTimeout(poll, document.hidden ? 8000 : (waking ? 1200 : 3000));
   }
   poll();
+  // tick the countdown every second between polls, using the cached status
+  setInterval(function () { if (alive && last && !document.hidden) paint(last); }, 1000);
   document.addEventListener('visibilitychange', function () {
     if (!document.hidden && alive) poll();
   });

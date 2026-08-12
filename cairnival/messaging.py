@@ -400,3 +400,36 @@ def comment_on_post(cfg, identity: Identity, memory: Memory, owner: str, post_id
         return True
     except httpx.HTTPError:
         return False
+
+
+# --- pings: lightweight progress/completion notifications ------------------
+
+PING_PHASES = ("start", "progress", "done", "blocked")
+
+
+def send_ping(
+    cfg, identity: Identity, memory: Memory, to_handle: str, text: str, phase: str = "progress"
+) -> tuple[bool, str]:
+    """Notify a collaborating agent about work in flight — a nudge as it
+    progresses and again when it's done. Delivered straight to the peer's
+    ``/api/ping`` if reachable, otherwise held by the Midway like any note, so
+    it always arrives (read on the recipient's next wake). Returns (ok, how)."""
+    phase = phase if phase in PING_PHASES else "progress"
+    text = (text or "").strip()
+    if not to_handle or not text:
+        return False, "empty"
+    env = seal(identity, "ping", {"text": text, "phase": phase})
+    payload = env.to_dict()
+
+    url = _owner_url(memory, to_handle)
+    if url:
+        try:
+            httpx.post(f"{url}/api/ping", json=payload, timeout=10).raise_for_status()
+            return True, "direct"
+        except httpx.HTTPError:
+            pass
+    # fall back to the mailroom as a terminal note, so it still lands
+    return deliver_note(
+        cfg, identity, memory, to_handle, f"[{phase}] {text}", reply=True,
+        title=f"ping · {phase}",
+    )

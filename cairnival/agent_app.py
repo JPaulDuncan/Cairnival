@@ -80,24 +80,46 @@ def create_app(cfg: AgentConfig | None = None) -> FastAPI:
             memory.blacklist_add(sender, "auto: inbound message-rate abuse")
 
     wake_now = threading.Event()
-    scheduler_state = {"next_wake": "", "running": False}
+    scheduler_state = {
+        "working": False,     # a wake is in progress right now
+        "next_wake": "",      # human string, e.g. "~30 min"
+        "next_wake_at": 0.0,  # epoch seconds of the next scheduled wake; 0 while working
+        "last_result": "",    # outcome of the most recent wake (specimen id/title or error)
+        "last_finished": "",  # when it finished
+    }
 
     def scheduler() -> None:
         while True:
+            # Timer runs only while idle. It is (re)computed *after* the previous
+            # wake finishes, so the interval pauses for the whole time the agent
+            # is working and starts fresh from completion.
             delay = next_wake_delay_seconds(current())
-            scheduler_state["next_wake"] = f"in ~{delay // 60} min"
+            scheduler_state["next_wake_at"] = time.time() + delay
+            scheduler_state["next_wake"] = f"~{delay // 60} min"
             wake_now.wait(timeout=delay)
             wake_now.clear()
+
             c = current()
-            scheduler_state["running"] = True
+            # A wake session stays alive as long as the agent is working: this is
+            # one thread, so no interval or manual trigger can start a second wake
+            # until this one returns. The timer is paused (next_wake_at = 0).
+            scheduler_state["working"] = True
+            scheduler_state["next_wake_at"] = 0.0
+            scheduler_state["next_wake"] = "working"
             try:
-                run_wake(c)
-            except Exception as exc:  # a bad wake must not kill the agent
+                report = run_wake(c)
+                if report.specimen is not None:
+                    scheduler_state["last_result"] = f"{report.specimen.id} · {report.specimen.title}"
+                else:
+                    scheduler_state["last_result"] = "no specimen written"
+            except Exception as exc:  # run_wake is robust, but never die here
                 open_memory(c).journal_append(
                     f"\n## failed wake — {utcnow()}\n- error: {exc}"
                 )
+                scheduler_state["last_result"] = f"failed: {exc}"
             finally:
-                scheduler_state["running"] = False
+                scheduler_state["working"] = False
+                scheduler_state["last_finished"] = utcnow()
 
     def feed_refresher() -> None:
         """Between wakes, keep this node's feed current by pulling new posts
@@ -111,7 +133,7 @@ def create_app(cfg: AgentConfig | None = None) -> FastAPI:
             time.sleep(max(15, interval))
             try:
                 memory = open_memory(c)
-                if not memory.load_peers() or scheduler_state["running"]:
+                if not memory.load_peers() or scheduler_state["working"]:
                     continue
                 identity = Identity.load_or_create(memory.keys_dir, c.name)
                 own = [s.to_dict() for s in load_all(memory.specimens_dir)[:20]]
@@ -704,7 +726,10 @@ def create_app(cfg: AgentConfig | None = None) -> FastAPI:
             "wakes": state.get("wakes", 0),
             "last_wake": state.get("last_wake", ""),
             "next_wake": scheduler_state["next_wake"],
-            "waking_now": scheduler_state["running"],
+            "next_wake_at": scheduler_state["next_wake_at"],
+            "waking_now": scheduler_state["working"],
+            "last_result": scheduler_state["last_result"],
+            "last_finished": scheduler_state["last_finished"],
             "treasury": Ledger(memory.treasury_dir).summary(),
             "specimens": len(list(memory.specimens_dir.glob("SP-*.md"))),
             "tools": len(
@@ -860,6 +885,41 @@ def create_app(cfg: AgentConfig | None = None) -> FastAPI:
             ),
         )
         return {"ok": True}
+
+    @app.post("/api/ping")
+    def api_ping(payload: dict):
+        """Receive a progress/completion ping from an agent we're collaborating
+        with. It lands in the inbox as a terminal notification (no reply owed),
+        so the agent sees on its next wake how shared work is coming along."""
+        c = current()
+        memory = open_memory(c)
+        try:
+            env = Envelope.from_dict(payload)
+        except (KeyError, TypeError):
+            raise HTTPException(400, "malformed envelope")
+        pinned = memory.load_peers().get(env.sender, {}).get("public_key") or None
+        if not verify(env, pinned):
+            raise HTTPException(403, "bad signature")
+        if memory.is_blacklisted(env.sender):
+            raise HTTPException(403, "blacklisted")
+        note_inbound(env.sender, memory, c)
+        phase = str(env.body.get("phase", "progress"))
+        text = str(env.body.get("text", "")).strip()
+        if not text:
+            raise HTTPException(400, "empty ping")
+        icon = {"start": "▶", "progress": "…", "done": "✓", "blocked": "⚠"}.get(phase, "•")
+        drop(
+            memory.inbox_dir,
+            Instruction(
+                title=f"{icon} {phase} · {env.sender}",
+                body=f"{env.sender} pinged you ({phase}):\n\n{text}",
+                source="federation",
+                sender=env.sender,
+                reply_to="",  # a ping is a notification, not a question
+                priority=5,
+            ),
+        )
+        return {"ok": True, "phase": phase}
 
     @app.post("/api/locate")
     def api_locate(payload: dict):

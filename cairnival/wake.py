@@ -478,8 +478,16 @@ def run_wake(cfg: AgentConfig) -> WakeReport:
     wake_number = int(state.get("wakes", 0)) + 1
     ctx.note(f"wake {wake_number} at {utcnow()}")
 
+    def _stage(label: str, fn) -> None:
+        """Run a pre-work stage so a failure in it is journaled but can never
+        abort the wake before its specimen is written."""
+        try:
+            fn()
+        except Exception as exc:
+            ctx.note(f"{label} failed: {exc}")
+
     # 1a. if this is a new agent, let it form its own voice
-    _form_personality(ctx)
+    _stage("forming personality", lambda: _form_personality(ctx))
 
     # 1b. discover the tools we have, fresh — including any we wrote before
     discovered = registry.discover()
@@ -487,13 +495,16 @@ def run_wake(cfg: AgentConfig) -> WakeReport:
         ctx.note(f"discovered {len(discovered)} tool(s): {', '.join(discovered)}")
 
     # 2. read everything addressed to us ----------------------------------
-    _register_with_hub(ctx)
-    _discover_peers(ctx)
-    _fetch_hub_mail(ctx)
+    _stage("hub registration", lambda: _register_with_hub(ctx))
+    _stage("peer discovery", lambda: _discover_peers(ctx))
+    _stage("fetching hub mail", lambda: _fetch_hub_mail(ctx))
 
-    for ins in _gather_treasury_instructions(ctx):
-        drop(memory.inbox_dir, ins)
-        ctx.note(f"paid memo became instruction: {ins.title}")
+    def _gather_treasury() -> None:
+        for ins in _gather_treasury_instructions(ctx):
+            drop(memory.inbox_dir, ins)
+            ctx.note(f"paid memo became instruction: {ins.title}")
+
+    _stage("gathering paid memos", _gather_treasury)
 
     connectors: list[BaseConnector] = load_connectors(cfg)
     for connector in connectors:
@@ -511,7 +522,15 @@ def run_wake(cfg: AgentConfig) -> WakeReport:
     tools_written: list[str] = []
     tools_used: list[str] = []
     for ins in queue:
-        result = _work_instruction(ctx, ins)
+        try:
+            result = _work_instruction(ctx, ins)
+        except Exception as exc:  # one bad task must not sink the whole wake
+            ctx.note(f"work failed on '{ins.title}': {exc}")
+            result = {
+                "title": ins.title,
+                "source": ins.source,
+                "answer": f"(this task errored and was set aside: {exc})",
+            }
         worked.append(result)
         tools_written.extend(result.get("tools_written", []))
         tools_used.extend(result.get("tools_used", []))
@@ -524,31 +543,42 @@ def run_wake(cfg: AgentConfig) -> WakeReport:
     # 3b. self-direction: with attention to spare, pursue its own goals -----
     self_directed = False
     if cfg.self_direction_enabled and cfg.tools_enabled and handled < cfg.max_instructions_per_wake:
-        self_result = _work_instruction(ctx, _self_directed_instruction(ctx))
-        worked.append(self_result)
-        tools_written.extend(self_result.get("tools_written", []))
-        tools_used.extend(self_result.get("tools_used", []))
-        self_directed = True
+        try:
+            self_result = _work_instruction(ctx, _self_directed_instruction(ctx))
+            worked.append(self_result)
+            tools_written.extend(self_result.get("tools_written", []))
+            tools_used.extend(self_result.get("tools_used", []))
+            self_directed = True
+        except Exception as exc:
+            ctx.note(f"self-directed work failed: {exc}")
 
     # 4. write the specimen -------------------------------------------------
     specimen = _write_specimen(ctx, wake_number, worked)
     ctx.note(f"wrote specimen {specimen.id}: {specimen.title}")
 
     # 5. publish ------------------------------------------------------------
-    _flush_outbox(ctx)
-    _publish(ctx, specimen)
+    _stage("flushing outbox", lambda: _flush_outbox(ctx))
+    _stage("publishing", lambda: _publish(ctx, specimen))
 
     # 6. answer mail, greet peers ------------------------------------------
-    for handle, answer in replies:
-        ok, how = messaging.deliver_note(cfg, identity, memory, handle, answer, reply=True)
-        ctx.note(f"replied to {handle} over federation: {how if ok else 'undeliverable'}")
+    def _answer_replies() -> None:
+        for handle, answer in replies:
+            ok, how = messaging.deliver_note(cfg, identity, memory, handle, answer, reply=True)
+            ctx.note(f"replied to {handle} over federation: {how if ok else 'undeliverable'}")
+            # a reply to a work request is also a completion ping to the asker
+            _stage(
+                f"done-ping to {handle}",
+                lambda h=handle: messaging.send_ping(cfg, identity, memory, h, f"finished the work you asked for (wake #{wake_number})", phase="done"),
+            )
+
+    _stage("answering federation mail", _answer_replies)
     for connector in connectors:
         try:
             connector.deliver(ctx, specimen)
         except Exception as exc:
             ctx.note(f"connector {connector.name} deliver failed: {exc}")
-    _greet_peers(ctx)
-    _gather_feed(ctx)
+    _stage("greeting peers", lambda: _greet_peers(ctx))
+    _stage("gathering feed", lambda: _gather_feed(ctx))
 
     # 7. journal, state, sleep ---------------------------------------------
     memory.journal_append(

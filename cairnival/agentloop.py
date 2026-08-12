@@ -44,7 +44,7 @@ _FENCE_RE = re.compile(r"```([^\n`]*)\n(.*?)```", re.DOTALL)
 _ACTION_VERBS = (
     "run", "shell", "use", "write-tool", "send", "propose", "remember",
     "pursue", "locate", "help", "follow", "unfollow", "like", "unlike",
-    "reply", "personality", "final",
+    "reply", "personality", "ping", "final",
 )
 
 
@@ -166,6 +166,8 @@ def _describe(action: Action) -> str:
         return f"commented on {action.arg}"
     if action.kind == "personality":
         return "revised personality"
+    if action.kind == "ping":
+        return f"pinged {action.arg}"
     return action.kind
 
 
@@ -270,6 +272,10 @@ def _system_prompt(soul: str, registry: ToolRegistry, cfg, ctx) -> str:
         "- ```send:<agent>``` — send a message to another agent on the midway; "
         "the block body is your message. It lands in their inbox and they can "
         "reply to you.\n"
+        "- ```ping:<agent>``` — send a short progress/completion notice to an "
+        "agent you're collaborating with. Optional first line `phase: "
+        "start|progress|done|blocked`; the rest is your update. Use it to keep a "
+        "partner posted as work moves and to tell them when it's done.\n"
         "- ```locate:<agent>``` — find an agent you don't know yet by asking "
         "the agents you do know (who ask the agents they know). If found, it is "
         "added to your directory so you can ```send``` to it.\n"
@@ -365,6 +371,27 @@ def _observe(action: Action, registry: ToolRegistry, cfg, result: LoopResult, ct
             return "personality: put your revised character in the block body"
         ctx.memory.set_personality(text)
         return "revised your personality — it colors your voice from now on"
+    if action.kind == "ping":
+        handle = action.arg.strip()
+        if not handle:
+            return "ping: name the agent like ```ping:handle``` with your update in the body"
+        identity = getattr(ctx, "identity", None)
+        if identity is None:
+            return "ping: no identity available in this context"
+        lines = action.body.strip().splitlines()
+        phase = "progress"
+        text = action.body.strip()
+        # optional first line "phase: done|progress|start|blocked"
+        if lines and lines[0].lower().startswith("phase:"):
+            phase = lines[0].split(":", 1)[1].strip().lower() or "progress"
+            text = "\n".join(lines[1:]).strip()
+        if not text:
+            return "ping: put your progress note in the block body"
+        ok, how = messaging.send_ping(cfg, identity, ctx.memory, handle, text, phase)
+        if ok:
+            result.messages_sent.append(handle)
+            return f"pinged {handle} ({phase}, {how}) — it lands as a notification in their inbox"
+        return f"couldn't reach {handle} to ping — locate them first, or they may be unknown"
     if action.kind == "locate":
         target = (action.arg or action.body).strip().split()[0] if (action.arg or action.body).strip() else ""
         if not target:
@@ -522,7 +549,10 @@ def solve(ctx, instruction, registry: ToolRegistry) -> LoopResult:
             result.answer = action.body
             return result
 
-        observation = _observe(action, registry, cfg, result, ctx)
+        try:
+            observation = _observe(action, registry, cfg, result, ctx)
+        except Exception as exc:  # a failed action is an observation, not a crash
+            observation = f"(that action failed: {exc})"
         result.steps.append(Step(action, observation))
         result.actions.append(_describe(action))  # the action, not the reasoning
         label = action.arg or action.kind

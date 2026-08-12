@@ -119,6 +119,8 @@ def run_cli_capture(
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             text=True,
+            encoding="utf-8",
+            errors="replace",
             cwd=cwd,
             **popen_kwargs,
         )
@@ -142,6 +144,50 @@ _THINK_BLOCK = re.compile(
     r"<(think|thinking|reasoning)>.*?</\1>", re.DOTALL | re.IGNORECASE
 )
 _OPEN_THINK = re.compile(r"^\s*<(think|thinking|reasoning)>", re.IGNORECASE)
+
+
+# Tell-tale of UTF-8 text decoded as Latin-1/CP1252: a UTF-8 lead byte
+# (0xC2–0xF4, seen as Â/Ã/â/… ) immediately followed by a continuation byte.
+# The continuation is 0x80–0xBF, but bytes 0x80–0x9F often reach us already
+# re-mapped to CP1252's printables (€ ™ – — ' ' " " …), so we match those too.
+# "â€"/"â€™" — an em-dash or curly quote — are the everyday result.
+_CP1252_HIGH = "\u20ac\u201a\u0192\u201e\u2026\u2020\u2021\u02c6\u2030\u0160\u2039\u0152\u017d\u2018\u2019\u201c\u201d\u2022\u2013\u2014\u02dc\u2122\u0161\u203a\u0153\u017e\u0178"
+_MOJIBAKE_HINT = re.compile("[\u00c2-\u00f4][\u0080-\u00bf" + _CP1252_HIGH + "]")
+
+
+def repair_mojibake(text: str) -> str:
+    """Undo the classic UTF-8-decoded-as-Latin-1/CP1252 corruption.
+
+    Some model backends (or tools behind a misconfigured locale) hand back text
+    whose bytes were already mangled — an em-dash "—" arrives as "â€"", a curly
+    quote as "â€™". When the tell-tale pattern is present we re-encode to the
+    single-byte charset and decode as UTF-8 to recover the original. Guarded so
+    it can only ever *improve* the text: the repair is kept only if it strictly
+    reduces the corruption markers and introduces no replacement character,
+    otherwise the input is returned untouched.
+    """
+    if not text:
+        return text
+    before = len(_MOJIBAKE_HINT.findall(text))
+    if not before:
+        return text
+    for codec in ("cp1252", "latin-1"):
+        try:
+            candidate = text.encode(codec).decode("utf-8")
+        except (UnicodeEncodeError, UnicodeDecodeError):
+            continue
+        # keep the repair only if it strictly reduces the corruption markers
+        # and introduces no replacement character — a legit stray "é’" that
+        # can't round-trip through the codec is left exactly as it was.
+        if "�" not in candidate and len(_MOJIBAKE_HINT.findall(candidate)) < before:
+            return candidate
+    return text
+
+
+def clean_output(text: str) -> str:
+    """What every backend returns: reasoning stripped and any byte-level
+    mojibake healed, so only clean answer text reaches the record and the UI."""
+    return strip_thinking(repair_mojibake(text))
 
 
 def strip_thinking(text: str) -> str:
@@ -265,7 +311,7 @@ class OllamaBackend(LLMBackend):
             raise LLMError(f"unexpected ollama response shape: {data}") from exc
         # `data["message"]["thinking"]` holds the reasoning — intentionally
         # ignored. Strip any <think> a model inlined into content anyway.
-        return strip_thinking(content)
+        return clean_output(content)
 
 
 class LlamaCppServerBackend(LLMBackend):
@@ -300,7 +346,7 @@ class LlamaCppServerBackend(LLMBackend):
         except (httpx.HTTPError, ValueError) as exc:
             raise LLMError(f"llama.cpp server request failed: {exc}") from exc
         try:
-            return strip_thinking(str(data["choices"][0]["message"]["content"]))
+            return clean_output(str(data["choices"][0]["message"]["content"]))
         except (KeyError, IndexError, TypeError) as exc:
             raise LLMError(f"unexpected llama.cpp response shape: {data}") from exc
 
@@ -332,7 +378,7 @@ class LlamaCppCliBackend(LLMBackend):
             "--no-display-prompt",
         ]
         out = run_cli_capture(cmd, label="llama-cli", timeout=self.timeout)
-        return strip_thinking(out)
+        return clean_output(out)
 
 
 class CliAgentBackend(LLMBackend):
@@ -381,7 +427,7 @@ class CliAgentBackend(LLMBackend):
             cwd=workdir,
             timeout=self.timeout,
         )
-        return strip_thinking(out)
+        return clean_output(out)
 
 
 def build_backend(cfg) -> LLMBackend:

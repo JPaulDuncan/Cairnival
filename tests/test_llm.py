@@ -5,7 +5,15 @@ import httpx
 import pytest
 
 from cairnival.config import AgentConfig
-from cairnival.llm import LLMError, OllamaBackend, build_backend, run_cli_capture, strip_thinking
+from cairnival.llm import (
+    LLMError,
+    OllamaBackend,
+    build_backend,
+    clean_output,
+    repair_mojibake,
+    run_cli_capture,
+    strip_thinking,
+)
 
 
 def test_strip_thinking_removes_blocks():
@@ -14,6 +22,51 @@ def test_strip_thinking_removes_blocks():
     # case-insensitive and variant tags
     assert strip_thinking("<THINK>x</THINK>hi") == "hi"
     assert strip_thinking("<reasoning>x</reasoning>done") == "done"
+
+
+@pytest.mark.parametrize(
+    "original",
+    [
+        "The cairn — a pile of stones — held.",
+        "She said “hello” and ‘goodbye’.",
+        "it’s a fine day",
+        "café naïve résumé",
+        "Cairnival™ costs €5",
+        "André’s café — “open” 24/7",
+    ],
+)
+@pytest.mark.parametrize("form", ["latin-1", "cp1252"])
+def test_repair_mojibake_heals_utf8_misdecode(original, form):
+    """Text whose UTF-8 bytes were decoded as Latin-1/CP1252 is recovered."""
+    try:
+        mojibake = original.encode("utf-8").decode(form)
+    except UnicodeDecodeError:
+        pytest.skip(f"{form} can't represent this byte sequence")
+    if mojibake == original:
+        pytest.skip("no corruption to undo")
+    assert repair_mojibake(mojibake) == original
+
+
+@pytest.mark.parametrize(
+    "clean",
+    [
+        "A perfectly normal sentence.",
+        "café — already correct",
+        "emoji 🎡 survives",
+        "Ça va? Œuvre héllò.",
+        "André’s naïve façade",   # accented letter beside a curly quote
+        "it’s 5€ & 3™",
+        "",
+    ],
+)
+def test_repair_mojibake_never_corrupts_clean_text(clean):
+    assert repair_mojibake(clean) == clean
+
+
+def test_clean_output_strips_thinking_and_heals_mojibake():
+    # a reasoning block AND a mangled em-dash in one payload
+    raw = "<think>plan</think>The cairn â€” it held."
+    assert clean_output(raw) == "The cairn — it held."
 
 
 def test_strip_thinking_unclosed_is_dropped():
@@ -114,6 +167,14 @@ def test_run_cli_capture_returns_stdout():
 
 def test_run_cli_capture_feeds_stdin():
     assert run_cli_capture(["cat"], label="cat", stdin="piped in") == "piped in"
+
+
+def test_run_cli_capture_decodes_raw_utf8_bytes():
+    """A CLI that emits UTF-8 bytes is decoded as UTF-8 regardless of the
+    container locale — an em-dash comes back as "—", never as mojibake."""
+    prog = r'import sys; sys.stdout.buffer.write("dash — quote “x”".encode("utf-8"))'
+    out = run_cli_capture(["python3", "-c", prog], label="utf8")
+    assert out == "dash — quote “x”"
 
 
 def test_run_cli_capture_raises_on_nonzero_exit():

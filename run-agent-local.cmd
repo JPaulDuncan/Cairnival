@@ -11,6 +11,11 @@ if /I "%~3"=="--skip-install" set "SKIP_INSTALL=1"
 set "REPO_ROOT=%~dp0"
 cd /d "%REPO_ROOT%"
 
+rem UTF-8 for Python and its subprocesses, so a model's em-dashes and curly
+rem quotes survive instead of decoding as "â€".
+set "PYTHONUTF8=1"
+set "PYTHONIOENCODING=utf-8"
+
 where python >nul 2>nul
 if errorlevel 1 (
   echo Python is not on PATH. Install Python 3.11+ and retry.

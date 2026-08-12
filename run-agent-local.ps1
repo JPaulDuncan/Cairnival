@@ -11,6 +11,11 @@ $ErrorActionPreference = "Stop"
 $repoRoot = Split-Path -Parent $MyInvocation.MyCommand.Path
 Set-Location $repoRoot
 
+# UTF-8 for Python and any subprocess it spawns, so a model's em-dashes and
+# curly quotes survive instead of decoding as "â€".
+$env:PYTHONUTF8 = "1"
+$env:PYTHONIOENCODING = "utf-8"
+
 if (-not (Get-Command python -ErrorAction SilentlyContinue)) {
     throw "Python is not on PATH. Install Python 3.11+ and retry."
 }

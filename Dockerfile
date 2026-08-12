@@ -8,6 +8,14 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         bash git curl ca-certificates nodejs npm build-essential \
     && rm -rf /var/lib/apt/lists/*
 
+# UTF-8 everywhere: the agent's text is full of em-dashes and curly quotes, and
+# subprocesses (tools, model CLIs) inherit these. Without them a bare container
+# locale can decode a model's UTF-8 output as Latin-1 and turn "—" into "â€".
+ENV LANG=C.UTF-8 \
+    LC_ALL=C.UTF-8 \
+    PYTHONUTF8=1 \
+    PYTHONIOENCODING=utf-8
+
 WORKDIR /app
 
 COPY pyproject.toml README.md ./

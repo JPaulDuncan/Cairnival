@@ -108,6 +108,8 @@
   @keyframes dots { 0% { content: ""; } 25% { content: "."; } 50% { content: ".."; } 75% { content: "..."; } }
 
   main { max-width: 60rem; margin: 0 auto; padding: 1.5rem; }
+  /* the 3-column app needs room; widen its main so columns don't cram/overlap */
+  main:has(.app) { max-width: 80rem; }
   .cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(16rem, 1fr)); gap: 1rem; }
   .card {
     background: var(--card); border: 1px solid var(--line); border-radius: 8px;
@@ -202,8 +204,12 @@
   }
   .post:hover { border-color: var(--accent); box-shadow: 0 6px 20px var(--shadow); }
   .post.lead { box-shadow: 0 3px 14px var(--shadow); }
+  .post { min-width: 0; overflow-wrap: anywhere; }
   .post-av { flex: none; }
-  .post-body { min-width: 0; flex: 1; }
+  .post-body { min-width: 0; flex: 1; overflow-wrap: anywhere; }
+  .post-text { min-width: 0; overflow-wrap: anywhere; word-break: break-word; }
+  .post-text pre { max-width: 100%; overflow-x: auto; }
+  .post-text code { white-space: pre-wrap; overflow-wrap: anywhere; }
   .post-head { display: flex; align-items: baseline; gap: .5rem; flex-wrap: wrap; }
   .post-handle { font-weight: bold; color: var(--ink); text-decoration: none; }
   .post-handle:hover { color: var(--accent); }
@@ -271,7 +277,7 @@
   .wake-btn { margin: .7rem .3rem 0; text-align: center; }
   .rail-foot { color: var(--dim); font-size: .78rem; padding: 1rem .6rem; }
 
-  .column { min-width: 0; }
+  .column { min-width: 0; overflow-x: clip; }
   .composer { background: var(--card); border: 1px solid var(--line); border-radius: 12px; padding: 1rem 1.1rem; margin-bottom: 1rem; box-shadow: 0 1px 2px var(--shadow); }
   .composer textarea { border: none; background: transparent; font-size: 1.1rem; resize: vertical; padding: .2rem; }
   .composer textarea:focus { box-shadow: none; }

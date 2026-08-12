@@ -85,6 +85,32 @@ def _gather_treasury_instructions(ctx: WakeContext) -> list[Instruction]:
     return out
 
 
+def _form_personality(ctx: WakeContext) -> None:
+    """On its first real wake an agent writes its own character — a distinct
+    voice it will speak in and can revise later. Skipped if it already has one
+    or the instrument can't write (echo)."""
+    if not ctx.memory.personality_is_default():
+        return
+    if getattr(ctx.llm, "name", "") == "echo":
+        return
+    prompt = (
+        f"You are {ctx.cfg.name}, a small autonomous agent just coming to life "
+        f"at the Cairnival. Your one-line tagline is: \"{ctx.cfg.tagline}\".\n\n"
+        "Write your PERSONALITY — the distinct character and voice you'll speak "
+        "in from now on. A few short paragraphs: your temperament, what draws "
+        "your curiosity, quirks of how you write, what you care about. First "
+        "person, specific, a little idiosyncratic — this is you, not a résumé. "
+        "Start with '# PERSONALITY'."
+    )
+    try:
+        text = ctx.llm.chat(ctx.memory.soul(), prompt, think=False)
+        if text.strip():
+            ctx.memory.set_personality(text)
+            ctx.note("formed a personality — found my voice")
+    except LLMError:
+        pass
+
+
 def _self_directed_instruction(ctx: WakeContext) -> Instruction:
     """A prompt the agent gives *itself* when it has spare attention: advance a
     goal of its own, or dream one up. Not from anyone's inbox — this is where
@@ -157,7 +183,8 @@ def _work_instruction(ctx: WakeContext, ins: Instruction) -> dict[str, Any]:
 def _write_specimen(
     ctx: WakeContext, wake_number: int, worked: list[dict[str, str]]
 ) -> Specimen:
-    soul = ctx.memory.soul()
+    # the specimen is written in the agent's own voice
+    soul = ctx.memory.soul() + "\n\nYour voice:\n" + ctx.memory.personality().strip()
     journal_tail = ctx.memory.journal_tail(2000)
     if ctx.cfg.remember_enabled:
         remembered = ctx.memory.remember_tail(ctx.cfg.remember_limit)
@@ -450,6 +477,9 @@ def run_wake(cfg: AgentConfig) -> WakeReport:
 
     wake_number = int(state.get("wakes", 0)) + 1
     ctx.note(f"wake {wake_number} at {utcnow()}")
+
+    # 1a. if this is a new agent, let it form its own voice
+    _form_personality(ctx)
 
     # 1b. discover the tools we have, fresh — including any we wrote before
     discovered = registry.discover()

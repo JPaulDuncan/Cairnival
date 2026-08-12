@@ -72,6 +72,7 @@ class Tool:
     entry: str
     author: str = "agent"
     created: str = field(default_factory=utcnow)
+    shared: bool = True  # advertised to the federation (subject to policy)
     dir: Path | None = None
 
     def to_manifest(self) -> dict[str, Any]:
@@ -82,6 +83,7 @@ class Tool:
             "entry": self.entry,
             "author": self.author,
             "created": self.created,
+            "shared": self.shared,
         }
 
     @classmethod
@@ -93,6 +95,7 @@ class Tool:
             entry=str(data.get("entry", "run.sh")),
             author=str(data.get("author", "agent")),
             created=str(data.get("created", "")),
+            shared=bool(data.get("shared", True)),
             dir=tool_dir,
         )
 
@@ -130,6 +133,27 @@ class ToolRegistry:
             except Exception:
                 continue  # a malformed tool must never break discovery
         return self.tools
+
+    def shared_tools(self, policy: str) -> list[Tool]:
+        """Which tools this node advertises to the federation.
+        policy: all | none | selected (selected = tools with shared=True)."""
+        policy = (policy or "all").lower()
+        if policy == "none":
+            return []
+        tools = list(self.tools.values())
+        if policy == "selected":
+            return [t for t in tools if t.shared]
+        return tools
+
+    def set_shared(self, name: str, shared: bool) -> bool:
+        tool = self.tools.get(name)
+        if tool is None or tool.dir is None:
+            return False
+        tool.shared = shared
+        (tool.dir / "tool.json").write_text(
+            json.dumps(tool.to_manifest(), indent=2), encoding="utf-8"
+        )
+        return True
 
     def catalog(self) -> str:
         """Human/model-readable list of available tools."""

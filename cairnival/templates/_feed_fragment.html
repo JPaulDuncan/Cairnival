@@ -1,2 +1,2 @@
 {% import "_social.html" as social %}
-{% for s in posts %}{{ social.postcard(s) }}{% endfor %}
+{% for s in posts %}{{ social.postcard(s, me=me) }}{% endfor %}

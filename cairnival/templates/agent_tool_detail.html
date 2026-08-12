@@ -16,6 +16,12 @@
   by {{ tool.author }}{% if tool.created %} · created {{ tool.created }}{% endif %}
 </div>
 
+<form method="post" action="/tools/{{ tool.name }}/share" style="margin:.5rem 0">
+  <label class="label"><input type="checkbox" name="shared" value="1" style="width:auto"
+    {% if tool.shared %}checked{% endif %} onchange="this.form.submit()">
+    shared with the federation (when sharing policy is “all” or “selected”)</label>
+</form>
+
 <h2>Source</h2>
 <form method="post" action="/tools/{{ tool.name }}/save">
   <label class="label">description</label>

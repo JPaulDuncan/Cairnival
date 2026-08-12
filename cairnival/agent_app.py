@@ -153,7 +153,11 @@ def create_app(cfg: AgentConfig | None = None) -> FastAPI:
         follows — its feed, newest first."""
         merged: dict[str, dict] = {}
         for sp in load_all(memory.specimens_dir):
-            merged[f"{sp.agent}/{sp.id}"] = sp.to_dict()
+            d = sp.to_dict()
+            r = memory.reactions_for(sp.id)
+            d["likes"] = len(r.get("likes", []))
+            d["comments"] = len(r.get("comments", []))
+            merged[f"{sp.agent}/{sp.id}"] = d
         for p in memory.load_feed_cache():
             merged.setdefault(f"{p.get('agent')}/{p.get('id')}", p)
         rows = sorted(merged.values(), key=lambda p: p.get("collected", ""), reverse=True)
@@ -199,7 +203,7 @@ def create_app(cfg: AgentConfig | None = None) -> FastAPI:
         fresh = [s for s in posts if since and s.collected > since]
         html = ""
         if fresh:
-            html = templates.env.get_template("_feed_fragment.html").render(posts=fresh)
+            html = templates.env.get_template("_feed_fragment.html").render(posts=fresh, me=c.name)
         return {"count": len(fresh), "newest": newest, "html": html}
 
     @app.get("/agents/{handle}")
@@ -387,6 +391,51 @@ def create_app(cfg: AgentConfig | None = None) -> FastAPI:
         open_memory(current()).blacklist_remove(handle.strip())
         return _redirect(request, "/federation")
 
+    @app.post("/federation/follow")
+    def federation_follow(request: Request, handle: str = Form(...), following: str = Form("1")):
+        check_token(request)
+        back = request.headers.get("referer", "/federation")
+        open_memory(current()).set_following(handle.strip(), following not in ("0", "", "false"))
+        return _redirect(request, "/federation" if "/federation" in back else "/")
+
+    @app.post("/federation/help")
+    def federation_help(request: Request, need: str = Form(...)):
+        check_token(request)
+        c = current()
+        memory = open_memory(c)
+        identity = Identity.load_or_create(memory.keys_dir, c.name)
+        helper = messaging.find_help(c, identity, memory, need.strip())
+        _last_locate["text"] = (
+            f"{helper['handle']} can help (matched: {', '.join(helper.get('matched', []))})"
+            if helper else f"no agent in reach could help with '{need.strip()}'"
+        )
+        return _redirect(request, "/federation?located=1")
+
+    @app.post("/react")
+    def human_react(request: Request, owner: str = Form(...), post: str = Form(...), like: str = Form("1")):
+        """Like/unlike a post on behalf of this agent."""
+        check_token(request)
+        c = current()
+        memory = open_memory(c)
+        identity = Identity.load_or_create(memory.keys_dir, c.name)
+        if owner == c.name:
+            memory.react(post, c.name, like not in ("0", "false", ""))
+        else:
+            messaging.react_to_post(c, identity, memory, owner, post, like not in ("0", "false", ""))
+        return _redirect(request, request.headers.get("referer", "/"))
+
+    @app.post("/comment")
+    def human_comment(request: Request, owner: str = Form(...), post: str = Form(...), text: str = Form(...)):
+        check_token(request)
+        c = current()
+        memory = open_memory(c)
+        identity = Identity.load_or_create(memory.keys_dir, c.name)
+        if owner == c.name:
+            memory.add_comment(post, c.name, text.strip())
+        else:
+            messaging.comment_on_post(c, identity, memory, owner, post, text)
+        return _redirect(request, request.headers.get("referer", "/"))
+
     # -- tools -------------------------------------------------------------
     @app.get("/tools", response_class=HTMLResponse)
     def tools_page(request: Request):
@@ -468,6 +517,16 @@ def create_app(cfg: AgentConfig | None = None) -> FastAPI:
         registry.delete(name)
         return _redirect(request, "/tools")
 
+    @app.post("/tools/{name}/share")
+    def tool_share(request: Request, name: str, shared: str = Form("")):
+        check_token(request)
+        c = current()
+        memory = open_memory(c)
+        registry = ToolRegistry(memory.tools_dir, memory.workspace_dir, c)
+        registry.discover()
+        registry.set_shared(name, shared not in ("", "0", "false"))
+        return _redirect(request, f"/tools/{name}")
+
     @app.post("/tools/shell")
     def tools_shell(request: Request, command: str = Form(...)):
         check_token(request)
@@ -492,6 +551,7 @@ def create_app(cfg: AgentConfig | None = None) -> FastAPI:
                 "groups": GROUPS,
                 "clear_sentinel": SECRET_CLEAR_SENTINEL,
                 "soul": memory.soul(),
+                "personality": memory.personality(),
                 "remembered": memory.remember_tail(20000) if c.remember_enabled else "",
                 "home": str(home),
                 "saved": request.query_params.get("saved", ""),
@@ -511,6 +571,12 @@ def create_app(cfg: AgentConfig | None = None) -> FastAPI:
         c = current()
         open_memory(c).soul_path.write_text(soul.replace("\r\n", "\n"), encoding="utf-8")
         return _redirect(request, "/settings?saved=soul")
+
+    @app.post("/settings/personality")
+    async def personality_save(request: Request, personality: str = Form(...)):
+        check_token(request)
+        open_memory(current()).set_personality(personality)
+        return _redirect(request, "/settings?saved=personality")
 
     @app.post("/settings/forget")
     def forget(request: Request):
@@ -673,11 +739,127 @@ def create_app(cfg: AgentConfig | None = None) -> FastAPI:
 
     @app.get("/api/posts")
     def api_posts(limit: int = 20):
-        """This node's own posts, for peers building their feeds."""
+        """This node's own posts (with like/comment counts), for peers' feeds."""
         c = current()
         memory = open_memory(c)
-        posts = [s.to_dict() for s in load_all(memory.specimens_dir)[: max(1, min(limit, 100))]]
-        return {"posts": posts}
+        out = []
+        for s in load_all(memory.specimens_dir)[: max(1, min(limit, 100))]:
+            d = s.to_dict()
+            r = memory.reactions_for(s.id)
+            d["likes"] = len(r.get("likes", []))
+            d["comments"] = len(r.get("comments", []))
+            out.append(d)
+        return {"posts": out}
+
+    @app.get("/api/tools")
+    def api_tools():
+        """The tools this node chooses to share with the federation."""
+        c = current()
+        memory = open_memory(c)
+        reg = ToolRegistry(memory.tools_dir, memory.workspace_dir, c)
+        reg.discover()
+        return {
+            "sharing": c.tool_sharing,
+            "tools": [
+                {"name": t.name, "description": t.description, "interpreter": t.interpreter}
+                for t in reg.shared_tools(c.tool_sharing)
+            ],
+        }
+
+    @app.post("/api/help")
+    def api_help(payload: dict):
+        """Answer 'can anyone help with X?' from our own shared tooling, or
+        forward the call onward — each agent is a relay for capability."""
+        c = current()
+        memory = open_memory(c)
+        identity = Identity.load_or_create(memory.keys_dir, c.name)
+        try:
+            env = Envelope.from_dict(payload)
+        except (KeyError, TypeError):
+            raise HTTPException(400, "malformed envelope")
+        pinned = memory.load_peers().get(env.sender, {}).get("public_key") or None
+        if not verify(env, pinned):
+            raise HTTPException(403, "bad signature")
+        if memory.is_blacklisted(env.sender):
+            raise HTTPException(403, "you are blacklisted by this agent")
+        note_inbound(env.sender, memory, c)
+        need = str(env.body.get("need", ""))
+        try:
+            ttl = int(env.body.get("ttl", 0))
+        except (TypeError, ValueError):
+            ttl = 0
+        visited = [str(v).lower() for v in env.body.get("visited", [])]
+        helper = messaging.resolve_help(c, identity, memory, need, ttl, visited)
+        # let the agent see the call it was asked about (as feedback/awareness)
+        drop(
+            memory.inbox_dir,
+            Instruction(
+                title=f"Call for help from {env.sender}",
+                body=f"{env.sender} asked the federation for help with: {need}\n\n"
+                + ("You matched — they may reach out." if helper and helper.get("handle") == c.name
+                   else "You passed the call along."),
+                source="federation",
+                sender=env.sender,
+                priority=6,
+            ),
+        )
+        return {"found": helper is not None, "helper": helper}
+
+    @app.post("/api/react")
+    def api_react(payload: dict):
+        """Receive a like/unlike on one of this node's posts."""
+        c = current()
+        memory = open_memory(c)
+        try:
+            env = Envelope.from_dict(payload)
+        except (KeyError, TypeError):
+            raise HTTPException(400, "malformed envelope")
+        pinned = memory.load_peers().get(env.sender, {}).get("public_key") or None
+        if not verify(env, pinned):
+            raise HTTPException(403, "bad signature")
+        if memory.is_blacklisted(env.sender):
+            raise HTTPException(403, "blacklisted")
+        note_inbound(env.sender, memory, c)
+        post = str(env.body.get("post", ""))
+        like = bool(env.body.get("like", True))
+        count = memory.react(post, env.sender, like)
+        return {"ok": True, "likes": count}
+
+    @app.post("/api/comment")
+    def api_comment(payload: dict):
+        """Receive a comment on one of this node's posts — and let the agent
+        read it as feedback it can fold into its pursuits or personality."""
+        c = current()
+        memory = open_memory(c)
+        try:
+            env = Envelope.from_dict(payload)
+        except (KeyError, TypeError):
+            raise HTTPException(400, "malformed envelope")
+        pinned = memory.load_peers().get(env.sender, {}).get("public_key") or None
+        if not verify(env, pinned):
+            raise HTTPException(403, "bad signature")
+        if memory.is_blacklisted(env.sender):
+            raise HTTPException(403, "blacklisted")
+        note_inbound(env.sender, memory, c)
+        post = str(env.body.get("post", ""))
+        text = str(env.body.get("text", "")).strip()
+        if not text:
+            raise HTTPException(400, "empty comment")
+        memory.add_comment(post, env.sender, text)
+        drop(
+            memory.inbox_dir,
+            Instruction(
+                title=f"{env.sender} commented on {post}",
+                body=f"On your post {post}, {env.sender} said:\n\n{text}\n\n"
+                "This is feedback — you may fold it into a pursuit or your "
+                "personality, or reply.",
+                source="federation",
+                sender=env.sender,
+                reply_to="",
+                priority=6,
+            ),
+        )
+        return {"ok": True}
 
     @app.post("/api/locate")
     def api_locate(payload: dict):
@@ -736,10 +918,14 @@ def create_app(cfg: AgentConfig | None = None) -> FastAPI:
             memory.save_peers(peers)
 
         if env.kind == "hello":
+            was_following = peers.get(env.sender, {}).get("following", True)
             peers[env.sender] = {
                 "public_url": env.body.get("public_url", ""),
                 "public_key": env.public_key,
                 "tagline": env.body.get("tagline", ""),
+                # a direct hello is an introduction — follow by default; the
+                # agent can unfollow later on its own determination
+                "following": was_following,
                 "last_seen": utcnow(),
             }
             memory.save_peers(peers)

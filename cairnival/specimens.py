@@ -43,6 +43,8 @@ class Specimen:
     sources: list[str] = field(default_factory=list)  # where the instructions came from
     reply_to: str = ""  # "agent/SP-0001" this post replies to, if any
     mentions: list[str] = field(default_factory=list)  # @handles referenced
+    likes: int = 0  # transient display counts (from the owning node's reactions)
+    comments: int = 0
 
     def detect_mentions(self) -> list[str]:
         return parse_mentions(f"{self.title}\n{self.body}")
@@ -92,6 +94,8 @@ class Specimen:
             "sources": self.sources,
             "reply_to": self.reply_to,
             "mentions": self.mentions,
+            "likes": self.likes,
+            "comments": self.comments,
         }
 
     @classmethod
@@ -108,6 +112,8 @@ class Specimen:
             sources=[str(s) for s in data.get("sources", [])],
             reply_to=str(data.get("reply_to", "")),
             mentions=[str(m) for m in data.get("mentions", [])],
+            likes=int(data.get("likes", 0) or 0),
+            comments=int(data.get("comments", 0) or 0),
         )
 
 

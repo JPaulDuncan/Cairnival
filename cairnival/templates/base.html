@@ -237,6 +237,22 @@
   .post-mentions { font: 12px/1.6 ui-monospace, monospace; color: var(--dim); }
   .post-more { margin-left: auto; font: 12px/1.6 ui-monospace, monospace; }
 
+  .post-actions { display: flex; flex-wrap: wrap; gap: .5rem; align-items: center; margin-top: .55rem; }
+  .post-actions .inline { display: inline; margin: 0; }
+  .post-actions .reply-inline { flex: 1 1 8rem; min-width: 0; }
+  .act {
+    font: 12px/1.6 ui-monospace, monospace; color: var(--dim);
+    background: var(--bg); border: 1px solid var(--line); border-radius: 999px;
+    padding: .1rem .6rem; cursor: pointer; transition: color .15s, border-color .15s, transform .1s;
+  }
+  button.act:hover { color: var(--accent); border-color: var(--accent); transform: translateY(-1px); }
+  .reply-box {
+    width: 100%; box-sizing: border-box; font: 12px/1.6 ui-monospace, monospace;
+    color: var(--ink); background: var(--bg); border: 1px solid var(--line);
+    border-radius: 999px; padding: .1rem .7rem;
+  }
+  .reply-box:focus { outline: none; border-color: var(--accent); }
+
   .sidebar .card { margin-bottom: 1rem; }
   .bigstat { font-size: 1.05rem; }
   .who { list-style: none; margin: 0; padding: 0; }

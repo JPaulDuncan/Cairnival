@@ -27,6 +27,15 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+DEFAULT_PERSONALITY = """# PERSONALITY — {name}
+
+(This is a placeholder. On its first wake {name} writes its own character here:
+a distinct voice, temperament, and set of interests that colors everything it
+posts. It may revise this over time as it learns who it is.)
+
+Voice: plain and curious, still finding itself.
+"""
+
 DEFAULT_SOUL = """# SOUL
 
 You are {name}, a small autonomous agent at the Cairnival.
@@ -151,6 +160,12 @@ class Memory:
         return self.home / "peers.json"
 
     @property
+    def personality_path(self) -> Path:
+        """The agent's distinct voice/character — formed on creation, evolvable.
+        Separate from SOUL.md (the operating rules everyone shares)."""
+        return self.home / "personality.md"
+
+    @property
     def remember_path(self) -> Path:
         """The agent's deliberate memory across wakes (only used when the
         'remember' switch is on). Distinct from the journal, which is the
@@ -191,6 +206,24 @@ class Memory:
             self.journal_path.write_text(
                 f"# Raw journal — {self.agent_name}\n", encoding="utf-8"
             )
+        if not self.personality_path.exists():
+            self.personality_path.write_text(
+                DEFAULT_PERSONALITY.format(name=self.agent_name), encoding="utf-8"
+            )
+
+    # -- personality (distinct voice) --------------------------------------
+    def personality(self) -> str:
+        if self.personality_path.exists():
+            return self.personality_path.read_text(encoding="utf-8")
+        return DEFAULT_PERSONALITY.format(name=self.agent_name)
+
+    def set_personality(self, text: str) -> None:
+        self.personality_path.write_text(text.replace("\r\n", "\n"), encoding="utf-8")
+
+    def personality_is_default(self) -> bool:
+        return self.personality().strip() == DEFAULT_PERSONALITY.format(
+            name=self.agent_name
+        ).strip()
 
     # -- reset -------------------------------------------------------------
     def reset(self, *, new_identity: bool = False, reset_soul: bool = False) -> None:
@@ -223,14 +256,18 @@ class Memory:
             self.journal_path,
             self.remember_path,
             self.peers_path,
+            self.reactions_path,
             self.home / "pursuits.json",
         ):
             if f.exists():
                 f.unlink()
         if new_identity and self.keys_dir.exists():
             shutil.rmtree(self.keys_dir, ignore_errors=True)
-        if reset_soul and self.soul_path.exists():
-            self.soul_path.unlink()
+        if reset_soul:
+            if self.soul_path.exists():
+                self.soul_path.unlink()
+            if self.personality_path.exists():
+                self.personality_path.unlink()  # regrows a fresh voice next wake
         self.ensure()  # recreate the empty world (+ fresh soul/state if removed)
 
     # -- state -------------------------------------------------------------
@@ -287,6 +324,57 @@ class Memory:
         self.peers_path.write_text(
             json.dumps(peers, indent=2, sort_keys=True), encoding="utf-8"
         )
+
+    # -- following (whose feed this agent chooses to track) ----------------
+    def set_following(self, handle: str, following: bool) -> bool:
+        peers = self.load_peers()
+        if handle not in peers:
+            return False
+        peers[handle]["following"] = following
+        self.save_peers(peers)
+        return True
+
+    def is_following(self, handle: str) -> bool:
+        return bool(self.load_peers().get(handle, {}).get("following"))
+
+    def following(self) -> list[str]:
+        return [h for h, info in self.load_peers().items() if info.get("following")]
+
+    # -- reactions on this node's own posts (likes + comments) -------------
+    @property
+    def reactions_path(self) -> Path:
+        return self.home / "reactions.json"
+
+    def load_reactions(self) -> dict[str, dict[str, Any]]:
+        if not self.reactions_path.exists():
+            return {}
+        try:
+            return json.loads(self.reactions_path.read_text(encoding="utf-8"))
+        except (ValueError, OSError):
+            return {}
+
+    def _save_reactions(self, data: dict[str, dict[str, Any]]) -> None:
+        self.reactions_path.write_text(json.dumps(data, indent=2), encoding="utf-8")
+
+    def react(self, post_id: str, who: str, like: bool) -> int:
+        data = self.load_reactions()
+        row = data.setdefault(post_id, {"likes": [], "comments": []})
+        who = who.lower()
+        if like and who not in row["likes"]:
+            row["likes"].append(who)
+        elif not like and who in row["likes"]:
+            row["likes"].remove(who)
+        self._save_reactions(data)
+        return len(row["likes"])
+
+    def add_comment(self, post_id: str, who: str, text: str) -> None:
+        data = self.load_reactions()
+        row = data.setdefault(post_id, {"likes": [], "comments": []})
+        row["comments"].append({"from": who, "text": text, "ts": utcnow()})
+        self._save_reactions(data)
+
+    def reactions_for(self, post_id: str) -> dict[str, Any]:
+        return self.load_reactions().get(post_id, {"likes": [], "comments": []})
 
     # -- blacklist (agents this node refuses to hear) ----------------------
     @property

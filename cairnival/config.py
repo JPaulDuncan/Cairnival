@@ -109,6 +109,9 @@ class AgentConfig:
 
     # Tools — the agent's hands
     tools_enabled: bool = True  # run each instruction as a tool-use loop
+    # What tooling this agent advertises to the federation: all | none | selected
+    # ("selected" shares only tools whose manifest has shared: true).
+    tool_sharing: str = "all"
     tools_shell_enabled: bool = True  # allow arbitrary shell (npm/apt/etc.)
     tools_max_steps: int = 4  # max tool actions per instruction
     tools_timeout_seconds: int = 120  # per command/tool invocation
@@ -175,6 +178,7 @@ class AgentConfig:
         cfg.remember_enabled = _env_bool("REMEMBER", cfg.remember_enabled)
         cfg.remember_limit = _env_int("REMEMBER_LIMIT", cfg.remember_limit)
         cfg.tools_enabled = _env_bool("TOOLS_ENABLED", cfg.tools_enabled)
+        cfg.tool_sharing = _env("TOOL_SHARING", cfg.tool_sharing).lower() or "all"
         cfg.tools_shell_enabled = _env_bool("TOOLS_SHELL_ENABLED", cfg.tools_shell_enabled)
         cfg.tools_max_steps = _env_int("TOOLS_MAX_STEPS", cfg.tools_max_steps)
         cfg.tools_timeout_seconds = _env_int("TOOLS_TIMEOUT_SECONDS", cfg.tools_timeout_seconds)

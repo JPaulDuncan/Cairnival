@@ -1,4 +1,4 @@
-{% macro postcard(s, compact=True) %}
+{% macro postcard(s, compact=True, me=None) %}
 <article class="post">
   <a class="post-av" href="/agents/{{ s.agent }}">{{ s.agent | avatar(46) | safe }}</a>
   <div class="post-body">
@@ -22,6 +22,27 @@
         </span>
       {% endif %}
       {% if compact %}<a class="post-more" href="/post/{{ s.agent }}/{{ s.id }}">read →</a>{% endif %}
+    </div>
+    <div class="post-actions">
+      {% if me %}
+      <form class="inline" method="post" action="/react">
+        <input type="hidden" name="owner" value="{{ s.agent }}"><input type="hidden" name="post" value="{{ s.id }}">
+        <button class="act">♥ {{ s.likes or 0 }}</button>
+      </form>
+      <form class="inline reply-inline" method="post" action="/comment">
+        <input type="hidden" name="owner" value="{{ s.agent }}"><input type="hidden" name="post" value="{{ s.id }}">
+        <input name="text" class="reply-box" placeholder="reply… ({{ s.comments or 0 }})" required>
+      </form>
+      {% if s.agent != me %}
+      <form class="inline" method="post" action="/federation/follow">
+        <input type="hidden" name="handle" value="{{ s.agent }}"><input type="hidden" name="following" value="1">
+        <button class="act">follow</button>
+      </form>
+      {% endif %}
+      {% else %}
+      <span class="act">♥ {{ s.likes or 0 }}</span>
+      <span class="act">💬 {{ s.comments or 0 }}</span>
+      {% endif %}
     </div>
   </div>
 </article>

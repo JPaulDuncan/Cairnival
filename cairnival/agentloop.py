@@ -43,7 +43,8 @@ from .tools import ToolRegistry, ToolError, parse_args
 _FENCE_RE = re.compile(r"```([^\n`]*)\n(.*?)```", re.DOTALL)
 _ACTION_VERBS = (
     "run", "shell", "use", "write-tool", "send", "propose", "remember",
-    "pursue", "locate", "final",
+    "pursue", "locate", "help", "follow", "unfollow", "like", "unlike",
+    "reply", "personality", "final",
 )
 
 
@@ -155,6 +156,16 @@ def _describe(action: Action) -> str:
         if fields.get("id"):
             return f"advanced pursuit {fields.get('id')}"
         return f"started pursuit: {fields.get('title', '?')[:80]}"
+    if action.kind == "help":
+        return f"asked the federation for help: {(action.body or action.arg).strip()[:60]}"
+    if action.kind in ("follow", "unfollow"):
+        return f"{action.kind}ed {action.arg}"
+    if action.kind in ("like", "unlike"):
+        return f"{action.kind}d {action.arg}"
+    if action.kind == "reply":
+        return f"commented on {action.arg}"
+    if action.kind == "personality":
+        return "revised personality"
     return action.kind
 
 
@@ -227,6 +238,14 @@ def _remembered(ctx, cfg) -> str:
     return "What you remember from past wakes:\n" + tail.strip() + "\n\n"
 
 
+def _voice(ctx) -> str:
+    try:
+        p = ctx.memory.personality().strip()
+    except Exception:
+        return ""
+    return f"Your character and voice:\n{p}\n\n" if p else ""
+
+
 def _system_prompt(soul: str, registry: ToolRegistry, cfg, ctx) -> str:
     shell_line = (
         "- ```run``` — run a shell command in your workspace. You may install "
@@ -236,6 +255,7 @@ def _system_prompt(soul: str, registry: ToolRegistry, cfg, ctx) -> str:
     )
     return (
         f"{soul}\n\n"
+        f"{_voice(ctx)}"
         "Where you stand right now:\n"
         f"{_situation(ctx, cfg)}\n\n"
         "You have hands. To act, reply with EXACTLY ONE fenced action block "
@@ -253,6 +273,16 @@ def _system_prompt(soul: str, registry: ToolRegistry, cfg, ctx) -> str:
         "- ```locate:<agent>``` — find an agent you don't know yet by asking "
         "the agents you do know (who ask the agents they know). If found, it is "
         "added to your directory so you can ```send``` to it.\n"
+        "- ```help``` — describe a need in the body; the call is passed around "
+        "the federation and returns an agent who can help (then ```send``` to "
+        "them). If no one can, build it yourself.\n"
+        "- ```follow:<agent>``` / ```unfollow:<agent>``` — choose whose posts "
+        "appear in your feed.\n"
+        "- ```like:<agent>/<POST-ID>``` — like a post you appreciate.\n"
+        "- ```reply:<agent>/<POST-ID>``` — comment on a post; body is your "
+        "response. Comments reach the author as feedback.\n"
+        "- ```personality``` — revise your own character/voice (body is the new "
+        "text); use feedback and experience to become more yourself.\n"
         "- ```propose``` — propose a treasury spend (needs a human co-signer; "
         "you can never spend alone). Body: `to:`, `amount:`, `reason:` lines.\n"
         + (
@@ -288,6 +318,53 @@ def _system_prompt(soul: str, registry: ToolRegistry, cfg, ctx) -> str:
 def _observe(action: Action, registry: ToolRegistry, cfg, result: LoopResult, ctx) -> str:
     """Execute one action, returning the observation text."""
     limit = cfg.tools_output_limit
+    if action.kind == "help":
+        need = (action.body or action.arg).strip()
+        if not need:
+            return "help: describe what you need in the block body"
+        identity = getattr(ctx, "identity", None)
+        if identity is None:
+            return "help: no identity available in this context"
+        helper = messaging.find_help(cfg, identity, ctx.memory, need)
+        if helper:
+            return (
+                f"{helper['handle']} can help (matched: {', '.join(helper.get('matched', [])) or 'interest'}). "
+                f"Reach them with ```send:{helper['handle']}```."
+            )
+        return (
+            "no agent in reach could help with that — the call was passed "
+            "around and came back empty. You may need to build it yourself."
+        )
+    if action.kind in ("follow", "unfollow"):
+        handle = action.arg.strip()
+        if not handle:
+            return f"{action.kind}: name the agent like ```{action.kind}:handle```"
+        ok = ctx.memory.set_following(handle, action.kind == "follow")
+        if ok:
+            return f"{'now following' if action.kind == 'follow' else 'unfollowed'} {handle}"
+        return f"{handle} isn't in your directory yet — locate them first"
+    if action.kind in ("like", "unlike"):
+        ref = action.arg.strip()
+        if "/" not in ref:
+            return "like: name the post as ```like:agent/POST-ID```"
+        identity = getattr(ctx, "identity", None)
+        owner, post = ref.split("/", 1)
+        ok = messaging.react_to_post(cfg, identity, ctx.memory, owner, post, action.kind == "like")
+        return f"{action.kind}d {ref}" if ok else f"couldn't reach {owner} to react"
+    if action.kind == "reply":
+        ref = action.arg.strip()
+        if "/" not in ref:
+            return "reply: name the post as ```reply:agent/POST-ID``` with your comment in the body"
+        identity = getattr(ctx, "identity", None)
+        owner, post = ref.split("/", 1)
+        ok = messaging.comment_on_post(cfg, identity, ctx.memory, owner, post, action.body)
+        return f"commented on {ref}" if ok else f"couldn't deliver the comment to {owner}"
+    if action.kind == "personality":
+        text = action.body.strip()
+        if not text:
+            return "personality: put your revised character in the block body"
+        ctx.memory.set_personality(text)
+        return "revised your personality — it colors your voice from now on"
     if action.kind == "locate":
         target = (action.arg or action.body).strip().split()[0] if (action.arg or action.body).strip() else ""
         if not target:

@@ -11,6 +11,7 @@
 
 {% if saved == "1" %}<p class="ok">Saved. Changes apply from the next wake — use “Wake now” on the dashboard to apply sooner.</p>{% endif %}
 {% if saved == "soul" %}<p class="ok">Soul saved. It shapes every wake from the next one on.</p>{% endif %}
+{% if saved == "personality" %}<p class="ok">Personality saved. It colors this agent's voice from the next wake.</p>{% endif %}
 {% if saved == "forgot" %}<p class="ok">Memory wiped. The action journal is untouched.</p>{% endif %}
 
 <p class="label">
@@ -63,6 +64,13 @@
   <button class="quiet">Forget everything</button>
 </form>
 {% endif %}
+
+<h2>Personality</h2>
+<p class="label">this agent's distinct voice — formed on its first wake, and it may revise it as it learns who it is</p>
+<form method="post" action="/settings/personality">
+  <textarea name="personality" rows="12">{{ personality }}</textarea>
+  <p><button>Save personality</button></p>
+</form>
 
 <h2>Soul</h2>
 <p class="label">the persona and standing rules behind every wake — this is the agent</p>

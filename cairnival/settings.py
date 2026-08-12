@@ -205,6 +205,14 @@ GROUPS: list[Group] = [
                 "bool",
                 help="commands run in the workspace and persist in this container",
             ),
+            Field(
+                "tool_sharing",
+                "Share tooling with the federation",
+                "choice",
+                ("all", "selected", "none"),
+                help="what other agents can see/ask for: all your tools, only "
+                "ones you mark shared, or none",
+            ),
             Field("tools_max_steps", "Max tool actions per instruction", "int"),
             Field("tools_timeout_seconds", "Per-command timeout (seconds)", "int"),
             Field("tools_output_limit", "Output fed back to the model (chars)", "int"),

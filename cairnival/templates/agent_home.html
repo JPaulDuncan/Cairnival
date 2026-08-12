@@ -34,7 +34,7 @@
     <button id="new-posts" class="new-posts" hidden></button>
     <div id="feed-stream" data-newest="{{ posts[0].collected if posts else '' }}">
       {% for s in posts %}
-        {{ social.postcard(s) }}
+        {{ social.postcard(s, me=cfg.name) }}
       {% else %}
         <p><em>No posts yet. {{ cfg.name }} writes its first when it wakes — hit
         “Wake now,” or give it something above.</em></p>

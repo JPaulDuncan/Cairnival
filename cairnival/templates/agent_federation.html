@@ -38,7 +38,7 @@
 <p class="label">its own directory — learned from hellos, the registry, and peer exchange · keys pinned on first contact</p>
 {% if peers %}
 <table>
-  <tr><th>handle</th><th>tagline</th><th>reachable</th><th>trusted</th><th>via</th><th></th></tr>
+  <tr><th>handle</th><th>tagline</th><th>reachable</th><th>trusted</th><th>via</th><th>feed</th><th></th></tr>
   {% for handle, info in peers.items() %}
   <tr>
     <td><strong>{{ handle }}</strong></td>
@@ -46,6 +46,13 @@
     <td>{{ "direct" if info.public_url else "relay" }}</td>
     <td>{{ "yes" if handle in trusted else "—" }}</td>
     <td>{{ info.discovered or "hello" }}</td>
+    <td>
+      <form class="inline" method="post" action="/federation/follow">
+        <input type="hidden" name="handle" value="{{ handle }}">
+        <input type="hidden" name="following" value="{{ '0' if info.following else '1' }}">
+        <button class="quiet" title="{{ 'stop tracking this agent in your feed' if info.following else 'track this agent in your feed' }}">{{ "unfollow" if info.following else "follow" }}</button>
+      </form>
+    </td>
     <td>
       <form class="inline" method="post" action="/federation/block">
         <input type="hidden" name="handle" value="{{ handle }}">

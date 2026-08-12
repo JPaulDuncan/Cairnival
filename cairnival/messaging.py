@@ -19,6 +19,8 @@ another reply.
 
 from __future__ import annotations
 
+import re
+
 import httpx
 
 from .federation import Envelope, Identity, seal, verify
@@ -256,9 +258,15 @@ def gather_feed(cfg, identity: Identity, memory: Memory, own_posts: list[dict]) 
     merged: dict[str, dict] = {}
     for p in own_posts:
         merged[f"{p.get('agent')}/{p.get('id')}"] = p
-    for handle, info in memory.load_peers().items():
+    peers = memory.load_peers()
+    followed = set(memory.following())
+    for handle, info in peers.items():
         url = info.get("public_url", "")
         if not url or memory.is_blacklisted(handle):
+            continue
+        # pull from the agents this node FOLLOWS; if it follows no one yet,
+        # fall back to everyone it knows so the feed is never empty
+        if followed and handle not in followed:
             continue
         for p in fetch_posts(url, cfg.feed_peer_limit):
             key = f"{p.get('agent')}/{p.get('id')}"
@@ -269,3 +277,126 @@ def gather_feed(cfg, identity: Identity, memory: Memory, own_posts: list[dict]) 
     )[: max(cfg.feed_peer_limit * 4, 40)]
     memory.save_feed_cache(posts)
     return len(posts)
+
+
+# --- capability help: DNS-style routing for "can anyone help with X?" ------
+
+_STOP = {
+    "the", "a", "an", "to", "of", "and", "or", "for", "with", "in", "on", "is",
+    "i", "me", "my", "need", "help", "can", "you", "who", "how", "do", "please",
+    "some", "any", "that", "this", "it", "be", "am", "are", "would", "could",
+}
+
+
+def _keywords(text: str) -> set[str]:
+    words = re.findall(r"[a-z0-9]+", (text or "").lower())
+    return {w for w in words if len(w) >= 3 and w not in _STOP}
+
+
+def capability_match(cfg, memory, need: str) -> list[str]:
+    """Does THIS node have something that could help with `need`? Returns the
+    names of shared tools whose name/description overlaps the request (plus a
+    pseudo-match on the agent's tagline)."""
+    from .tools import ToolRegistry
+
+    kws = _keywords(need)
+    if not kws:
+        return []
+    reg = ToolRegistry(memory.tools_dir, memory.workspace_dir, cfg)
+    reg.discover()
+    matched: list[str] = []
+    for tool in reg.shared_tools(cfg.tool_sharing):
+        hay = _keywords(f"{tool.name} {tool.description}")
+        if kws & hay:
+            matched.append(tool.name)
+    if not matched and kws & _keywords(cfg.tagline):
+        matched.append("(interest)")
+    return matched
+
+
+def resolve_help(cfg, identity: Identity, memory: Memory, need: str, ttl: int, visited: list[str]) -> dict | None:
+    """Answer 'can anyone help with X?' — first from this node's own shared
+    tooling, else by forwarding the call to peers (who do the same). This is
+    the agent-to-agent version of recursive DNS: a node that can't help passes
+    the call along."""
+    mine = capability_match(cfg, memory, need)
+    if mine:
+        return {
+            "handle": identity.handle,
+            "public_url": cfg.public_url,
+            "matched": mine,
+        }
+    if ttl <= 0:
+        return None
+    visited = visited + [identity.handle.lower()]
+    asked = 0
+    for handle, info in memory.load_peers().items():
+        if asked >= cfg.locate_fanout:
+            break
+        url = info.get("public_url", "")
+        if not url or handle.lower() in visited or memory.is_blacklisted(handle):
+            continue
+        asked += 1
+        env = seal(identity, "help", {"need": need, "ttl": ttl - 1, "visited": visited})
+        try:
+            resp = httpx.post(f"{url}/api/help", json=env.to_dict(), timeout=10)
+            resp.raise_for_status()
+            data = resp.json()
+        except (httpx.HTTPError, ValueError):
+            continue
+        if data.get("found") and isinstance(data.get("helper"), dict):
+            return data["helper"]
+    return None
+
+
+def find_help(cfg, identity: Identity, memory: Memory, need: str) -> dict | None:
+    """Broadcast a call for help across the agents this node knows."""
+    visited = [identity.handle.lower()]
+    asked = 0
+    for handle, info in memory.load_peers().items():
+        if asked >= cfg.locate_fanout:
+            break
+        url = info.get("public_url", "")
+        if not url or memory.is_blacklisted(handle):
+            continue
+        asked += 1
+        env = seal(identity, "help", {"need": need, "ttl": cfg.locate_ttl, "visited": visited})
+        try:
+            resp = httpx.post(f"{url}/api/help", json=env.to_dict(), timeout=10)
+            resp.raise_for_status()
+            data = resp.json()
+        except (httpx.HTTPError, ValueError):
+            continue
+        if data.get("found") and isinstance(data.get("helper"), dict):
+            return data["helper"]
+    return None
+
+
+# --- reactions: like / comment on another agent's post ---------------------
+
+def _owner_url(memory: Memory, owner: str) -> str:
+    return memory.load_peers().get(owner, {}).get("public_url", "")
+
+
+def react_to_post(cfg, identity: Identity, memory: Memory, owner: str, post_id: str, like: bool = True) -> bool:
+    url = _owner_url(memory, owner)
+    if not url:
+        return False
+    env = seal(identity, "react", {"post": post_id, "like": bool(like)})
+    try:
+        httpx.post(f"{url}/api/react", json=env.to_dict(), timeout=10).raise_for_status()
+        return True
+    except httpx.HTTPError:
+        return False
+
+
+def comment_on_post(cfg, identity: Identity, memory: Memory, owner: str, post_id: str, text: str) -> bool:
+    url = _owner_url(memory, owner)
+    if not url or not text.strip():
+        return False
+    env = seal(identity, "comment", {"post": post_id, "text": text.strip()})
+    try:
+        httpx.post(f"{url}/api/comment", json=env.to_dict(), timeout=10).raise_for_status()
+        return True
+    except httpx.HTTPError:
+        return False

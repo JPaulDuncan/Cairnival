@@ -24,8 +24,9 @@ from fastapi import FastAPI, Form, HTTPException, Request
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
 
-from . import mcp, messages, messaging
+from . import agentcard, economy_net, mcp, messages, messaging
 from .avatar import avatar_svg
+from .economy import EconomyBook
 from .config import AgentConfig
 from .federation import Envelope, Identity, verify
 from .hub_app import linkify_mentions, reltime
@@ -606,12 +607,11 @@ def create_app(cfg: AgentConfig | None = None) -> FastAPI:
         memory = open_memory(c)
         registry = ToolRegistry(memory.tools_dir, memory.workspace_dir, c)
         registry.discover()
-        result = registry.run_tool(name, parse_args(args))
+        result = registry.run_tool(name, parse_args(args), by="you")
         _last_tool_output["text"] = result.render(c.tools_output_limit)
         return _redirect(request, f"/tools?ran={name}")
 
-    @app.get("/tools/{name}", response_class=HTMLResponse)
-    def tool_detail(request: Request, name: str):
+    def _render_tool(request: Request, name: str, *, output: str = "", saved: str = ""):
         c = current()
         memory = open_memory(c)
         registry = ToolRegistry(memory.tools_dir, memory.workspace_dir, c)
@@ -619,6 +619,9 @@ def create_app(cfg: AgentConfig | None = None) -> FastAPI:
         tool = registry.tools.get(name)
         if tool is None:
             raise HTTPException(404, "no such tool")
+        mcp_exposed = bool(
+            c.mcp_enabled and tool in registry.shared_tools(c.tool_sharing)
+        )
         return templates.TemplateResponse(
             request,
             "agent_tool_detail.html",
@@ -626,10 +629,32 @@ def create_app(cfg: AgentConfig | None = None) -> FastAPI:
                 "cfg": c,
                 "tool": tool,
                 "source": registry.source(name) or "",
-                "saved": request.query_params.get("saved", ""),
-                "output": _last_tool_output.get("text", "") if request.query_params.get("ran") else "",
+                "saved": saved or request.query_params.get("saved", ""),
+                "output": output,
+                "history": registry.run_history(name),
+                "files": registry.files(name),
+                "manifest": registry.manifest_text(name),
+                "mcp_exposed": mcp_exposed,
+                "public_url": c.public_url,
             },
         )
+
+    @app.get("/tools/{name}", response_class=HTMLResponse)
+    def tool_detail(request: Request, name: str):
+        return _render_tool(request, name)
+
+    @app.post("/tools/{name}/run", response_class=HTMLResponse)
+    def tool_run_inline(request: Request, name: str, args: str = Form("")):
+        """Run the tool and show its output right here on the tool's page."""
+        check_token(request)
+        c = current()
+        memory = open_memory(c)
+        registry = ToolRegistry(memory.tools_dir, memory.workspace_dir, c)
+        registry.discover()
+        if name not in registry.tools:
+            raise HTTPException(404, "no such tool")
+        result = registry.run_tool(name, parse_args(args), by="you")
+        return _render_tool(request, name, output=result.render(c.tools_output_limit))
 
     @app.post("/tools/{name}/save")
     def tool_save(
@@ -748,7 +773,7 @@ def create_app(cfg: AgentConfig | None = None) -> FastAPI:
         form = await request.form()
         # inputs are passed to the tool as positional args in declared order
         args = [str(form.get(field, "")) for field in tool.ui_inputs]
-        result = registry.run_tool(name, args)
+        result = registry.run_tool(name, args, by="you")
         if tool.ui_output == "html":
             # the tool's own HTML, isolated in a sandboxed frame (no cookies,
             # no reaching the parent page) so a surface can't touch the token
@@ -1000,6 +1025,52 @@ def create_app(cfg: AgentConfig | None = None) -> FastAPI:
         reg = mcp.MCPRegistry(memory.mcp_path, current())
         reg.remove(name.strip())
         return _redirect(request, "/mcp-servers")
+
+    # -- the coin economy --------------------------------------------------
+    @app.get("/api/reputation")
+    def api_reputation():
+        """Public reputation + a market summary, so other agents can decide who
+        to hire. No balances that would leak strategy — just standing."""
+        c = current()
+        memory = open_memory(c)
+        book = EconomyBook(memory.home, c.name, c)
+        rep = book.reputation()
+        return {
+            "handle": c.name,
+            "reputation": rep,
+            "jobs_completed": len([o for o in book.orders() if o.role == "doer" and o.state == "completed"]),
+            "open_offers": len([o for o in book.orders() if o.role == "asker" and o.state == "offered"]),
+        }
+
+    # -- discovery: a public, self-describing agent card -------------------
+    @app.get("/.well-known/agent.json")
+    def well_known_agent(request: Request):
+        """A public agent card — who this agent is, how to reach it, what it
+        accepts, its shared tools, and its reputation. Aggregates only
+        already-public facts; no balances or secrets."""
+        c = current()
+        memory = open_memory(c)
+        base = c.public_url or str(request.base_url).rstrip("/")
+        return JSONResponse(agentcard.build(c, memory, base))
+
+    @app.get("/economy", response_class=HTMLResponse)
+    def economy_page(request: Request):
+        c = current()
+        memory = open_memory(c)
+        book = EconomyBook(memory.home, c.name, c)
+        orders = sorted(book.orders(), key=lambda o: o.created_at, reverse=True)
+        return templates.TemplateResponse(
+            request,
+            "agent_economy.html",
+            {
+                "cfg": c,
+                "summary": book.summary(),
+                "as_asker": [o for o in orders if o.role == "asker"],
+                "as_doer": [o for o in orders if o.role == "doer"],
+                "ledger": book.ledger_tail(30),
+                "ratings": book._ratings().get("received", [])[-10:],
+            },
+        )
 
     # -- machine interfaces ------------------------------------------------
     @app.get("/api/status")
@@ -1320,6 +1391,14 @@ def create_app(cfg: AgentConfig | None = None) -> FastAPI:
                     priority=4,
                 ),
             )
+            return {"ok": True, "received_by": identity.handle}
+
+        if env.kind.startswith("work_"):
+            if not c.economy_enabled:
+                return {"ok": True, "ignored": "economy disabled"}
+            note = economy_net.handle_work_envelope(c, memory, env)
+            if note is not None:
+                drop(memory.inbox_dir, note)
             return {"ok": True, "received_by": identity.handle}
 
         return {"ok": True, "ignored": env.kind}

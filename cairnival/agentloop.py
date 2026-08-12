@@ -60,7 +60,8 @@ _FENCE_RE = re.compile(r"```([^\n`]*)\n(.*?)```", re.DOTALL)
 _ACTION_VERBS = (
     "run", "shell", "use", "write-tool", "send", "propose", "remember",
     "pursue", "locate", "help", "follow", "unfollow", "like", "unlike",
-    "reply", "personality", "ping", "surface", "ask", "mcp", "final",
+    "reply", "personality", "ping", "surface", "ask", "mcp", "bluesky",
+    "offer", "accept", "decline", "submit", "release", "rate", "final",
 )
 
 
@@ -205,6 +206,14 @@ def _describe(action: Action) -> str:
         return f"asked {action.arg} to do a task (with a response format)"
     if action.kind == "mcp":
         return f"called MCP tool {action.arg}"
+    if action.kind == "bluesky":
+        return "posted to Bluesky"
+    if action.kind == "offer":
+        return f"offered a paid job to {action.arg}"
+    if action.kind in ("accept", "decline", "submit", "release"):
+        return f"{action.kind}ed work order {action.arg}"
+    if action.kind == "rate":
+        return f"rated work order {action.arg}"
     return action.kind
 
 
@@ -283,6 +292,34 @@ def _voice(ctx) -> str:
     except Exception:
         return ""
     return f"Your character and voice:\n{p}\n\n" if p else ""
+
+
+def _economy_block(ctx) -> str:
+    """The agent's coin standing and its open jobs — so it plays the market."""
+    cfg = getattr(ctx, "cfg", None)
+    memory = getattr(ctx, "memory", None)
+    if cfg is None or memory is None or not getattr(cfg, "economy_enabled", False):
+        return ""
+    try:
+        from .economy import EconomyBook
+        book = EconomyBook(memory.home, cfg.name, cfg)
+        s = book.summary()
+        rep = s["reputation"]
+        lines = [
+            f"Coins: {s['balance']} spendable ({s['available']} free to offer, "
+            f"{s['escrowed']} in escrow) · reputation {rep.get('score', 0)}/5 "
+            f"over {rep.get('count', 0)} rating(s) · {rep.get('coins_earned', 0)} coins earned.",
+        ]
+        active = [o for o in book.orders() if o.state in ("offered", "accepted", "submitted")]
+        for o in active[:8]:
+            who = f"→ {o.doer}" if o.role == "asker" else f"← {o.asker}"
+            lines.append(f"  · {o.id} [{o.state}] {who} {o.coins} coins: {o.title}")
+        return (
+            "Your coins (an internal currency — earn by doing others' jobs, spend "
+            "to get yours done):\n" + "\n".join(lines) + "\n\n"
+        )
+    except Exception:
+        return ""
 
 
 def _mcp_block(ctx) -> str:
@@ -369,11 +406,33 @@ def _system_prompt(soul: str, registry: ToolRegistry, cfg, ctx) -> str:
             if cfg.self_direction_enabled
             else ""
         )
+        + (
+            "- ```bluesky``` — post the block body (max 300 chars) to your "
+            "Bluesky account. Use it to reply to a mention or share a thought "
+            "with the wider world.\n"
+            if getattr(cfg, "bluesky_enabled", False) and cfg.bluesky_handle
+            else ""
+        )
         + "- ```final``` — your answer, when the work is done.\n\n"
         + _remembered(ctx, cfg)
         + _pursuits_block(ctx, cfg)
+        + (
+            "- ```offer:<agent>``` — pay another agent to do a task. Body: "
+            "`coins:` (the bounty) and `criteria:` (how you'll judge it done). "
+            "Coins are reserved now, escrowed when they accept, and released "
+            "when you approve their work. Pick a doer with good reputation.\n"
+            "- ```accept:<order>``` / ```decline:<order>``` — take or refuse a "
+            "job offered to you (its coins are escrowed by the asker on accept).\n"
+            "- ```submit:<order>``` — hand in your deliverable (in the body) for "
+            "a job you accepted; the asker verifies and pays.\n"
+            "- ```release:<order>``` — approve a job you posted; the escrow goes "
+            "to the doer. ```rate:<order>``` (body `stars: 1-5`) rates them.\n"
+            if getattr(cfg, "economy_enabled", False)
+            else ""
+        )
         + "Your tools right now:\n"
         f"{registry.catalog()}\n\n"
+        + _economy_block(ctx)
         + _mcp_block(ctx)
         + "Other agents you can reach:\n"
         f"{_peer_roster(ctx)}\n\n"
@@ -385,6 +444,69 @@ def _system_prompt(soul: str, registry: ToolRegistry, cfg, ctx) -> str:
         "specimen) about the wake, so keep track of what you did. Keep each "
         "command small, and prefer writing a tool when a task will recur."
     )
+
+
+def _observe_economy(action: Action, cfg, result: LoopResult, ctx) -> str:
+    """The coin economy actions: offer / accept / decline / submit / release /
+    rate. Each updates the local ledger and signs an envelope to the peer."""
+    if not getattr(cfg, "economy_enabled", False):
+        return "the coin economy is off for this agent"
+    identity = getattr(ctx, "identity", None)
+    memory = getattr(ctx, "memory", None)
+    if identity is None or memory is None:
+        return "economy: no identity/memory in this context"
+    from . import economy_net
+    from .economy import EconomyError
+
+    kind = action.kind
+    arg = action.arg.strip()
+    try:
+        if kind == "offer":
+            if not arg:
+                return "offer: name the agent like ```offer:handle``` with `coins:` and `criteria:` lines"
+            fields = _parse_kv(action.body)
+            try:
+                coins = int(fields.get("coins", "0"))
+            except ValueError:
+                return "offer: `coins:` must be a whole number"
+            criteria = fields.get("criteria", "") or action.body.strip()
+            if coins <= 0 or not criteria:
+                return "offer: need a positive `coins:` bounty and a `criteria:` (the success criteria)"
+            order, ok, how = economy_net.send_offer(
+                cfg, identity, memory, arg, coins, criteria, fields.get("title", ""))
+            if ok:
+                result.messages_sent.append(arg)
+                return (f"offered {arg} a {coins}-coin job ({order.id}, {how}). "
+                        f"Coins reserved; escrowed when they accept.")
+            return f"couldn't reach {arg} to offer the job (it was cancelled, coins un-reserved)"
+        if kind == "accept":
+            ok, how = economy_net.send_accept(cfg, identity, memory, arg)
+            return f"accepted {arg} ({how}) — now do the work and ```submit:{arg}```" if ok \
+                else f"accepted {arg} locally but couldn't notify the asker"
+        if kind == "decline":
+            economy_net.send_decline(cfg, identity, memory, arg)
+            return f"declined {arg}"
+        if kind == "submit":
+            if not action.body.strip():
+                return "submit: put your deliverable (the result / evidence) in the block body"
+            ok, how = economy_net.send_submit(cfg, identity, memory, arg, action.body.strip())
+            return f"submitted work for {arg} ({how}) — the asker verifies and releases payment" if ok \
+                else f"submitted {arg} locally but couldn't notify the asker"
+        if kind == "release":
+            ok, how = economy_net.send_release(cfg, identity, memory, arg)
+            return f"released {arg} ({how}) — the coins are the doer's now; ```rate:{arg}``` them" if ok \
+                else f"released {arg} locally but couldn't notify the doer"
+        if kind == "rate":
+            fields = _parse_kv(action.body)
+            try:
+                stars = int(fields.get("stars", action.body.strip().split()[0] if action.body.strip() else "0"))
+            except (ValueError, IndexError):
+                return "rate: give `stars:` 1-5"
+            economy_net.send_rate(cfg, identity, memory, arg, stars, fields.get("note", ""))
+            return f"rated {arg}: {max(1, min(5, stars))}/5"
+    except EconomyError as exc:
+        return f"{kind}: {exc}"
+    return ""
 
 
 def _observe(action: Action, registry: ToolRegistry, cfg, result: LoopResult, ctx) -> str:
@@ -540,6 +662,21 @@ def _observe(action: Action, registry: ToolRegistry, cfg, result: LoopResult, ct
         except Exception as exc:  # MCPError and anything the transport throws
             return f"mcp call failed: {exc}"
         return out or "(the MCP tool returned nothing)"
+    if action.kind == "bluesky":
+        if not (getattr(cfg, "bluesky_enabled", False) and cfg.bluesky_handle and cfg.bluesky_app_password):
+            return "bluesky: not configured — enable it in Settings with a handle and app password"
+        text = action.body.strip()
+        if not text:
+            return "bluesky: put your post text in the block body (max 300 chars)"
+        from .bluesky import BlueskyClient, BlueskyError
+        client = BlueskyClient(cfg.bluesky_handle, cfg.bluesky_app_password, cfg.bluesky_pds)
+        try:
+            res = client.create_post(text[:300])
+        except BlueskyError as exc:
+            return f"bluesky post failed: {exc}"
+        return f"posted to Bluesky ({res.get('uri', 'ok')})"
+    if action.kind in ("offer", "accept", "decline", "submit", "release", "rate"):
+        return _observe_economy(action, cfg, result, ctx)
     if action.kind == "propose":
         ledger = getattr(ctx, "ledger", None)
         if ledger is None:

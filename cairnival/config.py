@@ -93,6 +93,15 @@ class AgentConfig:
     rss_feeds: list[str] = field(default_factory=list)
     webhook_token: str = ""
 
+    # Bluesky / AT Protocol. When on (with a handle + app password), the agent
+    # cross-posts its specimens to Bluesky and reads its mentions/replies into
+    # the inbox. Gated by its own switch, not the CONNECTORS list.
+    bluesky_enabled: bool = False
+    bluesky_handle: str = ""
+    bluesky_app_password: str = ""  # an app password, never the account password
+    bluesky_pds: str = "https://bsky.social"
+    bluesky_post_specimens: bool = True
+
     # Self-direction. When on, each wake with spare attention the agent
     # advances a goal of its own — or dreams one up — using its tools and its
     # peers. Its pursuits persist across wakes (that is how it grows). On by
@@ -133,6 +142,15 @@ class AgentConfig:
     # as MCP at /mcp.
     mcp_enabled: bool = True
     mcp_servers: list[str] = field(default_factory=list)  # env shorthand: name=url
+
+    # The coin economy — an internal labor market, separate from the treasury.
+    # Each agent is granted a starting balance and earns more by doing work for
+    # other agents (escrowed, rated, with a completion dividend minting supply).
+    economy_enabled: bool = True
+    economy_starting_balance: int = 1000
+    economy_dividend_rate: float = 0.05   # coins minted to the doer per completed job
+    economy_wake_stipend: int = 0         # optional per-wake basic income (0 = off)
+    economy_escrow_days: int = 7          # a work order's default deadline
 
     @classmethod
     def from_env(cls) -> "AgentConfig":
@@ -178,6 +196,11 @@ class AgentConfig:
         cfg.connectors = _env_list("CONNECTORS")
         cfg.rss_feeds = _env_list("RSS_FEEDS")
         cfg.webhook_token = _env("WEBHOOK_TOKEN", cfg.webhook_token)
+        cfg.bluesky_enabled = _env_bool("BLUESKY_ENABLED", cfg.bluesky_enabled)
+        cfg.bluesky_handle = _env("BLUESKY_HANDLE", cfg.bluesky_handle)
+        cfg.bluesky_app_password = _env("BLUESKY_APP_PASSWORD", cfg.bluesky_app_password)
+        cfg.bluesky_pds = _env("BLUESKY_PDS", cfg.bluesky_pds).rstrip("/")
+        cfg.bluesky_post_specimens = _env_bool("BLUESKY_POST_SPECIMENS", cfg.bluesky_post_specimens)
         cfg.self_direction_enabled = _env_bool(
             "SELF_DIRECTION", cfg.self_direction_enabled
         )
@@ -193,6 +216,14 @@ class AgentConfig:
             cfg.tools_denylist = _env_list("TOOLS_DENYLIST")
         cfg.mcp_enabled = _env_bool("MCP_ENABLED", cfg.mcp_enabled)
         cfg.mcp_servers = _env_list("MCP_SERVERS")
+        cfg.economy_enabled = _env_bool("ECONOMY_ENABLED", cfg.economy_enabled)
+        cfg.economy_starting_balance = _env_int("ECONOMY_STARTING_BALANCE", cfg.economy_starting_balance)
+        try:
+            cfg.economy_dividend_rate = float(_env("ECONOMY_DIVIDEND_RATE", str(cfg.economy_dividend_rate)))
+        except ValueError:
+            pass
+        cfg.economy_wake_stipend = _env_int("ECONOMY_WAKE_STIPEND", cfg.economy_wake_stipend)
+        cfg.economy_escrow_days = _env_int("ECONOMY_ESCROW_DAYS", cfg.economy_escrow_days)
         return cfg
 
 

@@ -300,7 +300,7 @@ class ToolRegistry:
         shell = shutil.which("bash") or shutil.which("sh") or "sh"
         return self._exec([shell, "-lc", command])
 
-    def run_tool(self, name: str, args: list[str], stdin: str = "") -> ToolResult:
+    def run_tool(self, name: str, args: list[str], stdin: str = "", by: str = "agent") -> ToolResult:
         tool = self.tools.get(name)
         if tool is None or tool.dir is None:
             return ToolResult(False, "", note=f"no such tool: {name}")
@@ -313,7 +313,67 @@ class ToolRegistry:
                 False, "", note=f"{interp[0]} is not installed in this container"
             )
         cmd = [binary, str(tool.dir / tool.entry), *args]
-        return self._exec(cmd, stdin=stdin)
+        result = self._exec(cmd, stdin=stdin)
+        self._record_run(tool, args, result, by)
+        return result
+
+    # -- per-tool run history + introspection (for the tool's sub-surface) --
+    def _runs_path(self, tool: Tool) -> Path | None:
+        return (tool.dir / "runs.json") if tool.dir else None
+
+    def _record_run(self, tool: Tool, args: list[str], result: ToolResult, by: str) -> None:
+        path = self._runs_path(tool)
+        if path is None:
+            return
+        hist = self.run_history(tool.name)
+        hist.insert(0, {
+            "ts": utcnow(),
+            "by": by,
+            "args": " ".join(args),
+            "ok": result.ok,
+            "exit": result.exit_code,
+            "output": (result.output or "")[:600],
+        })
+        try:
+            path.write_text(json.dumps(hist[:25], indent=2), encoding="utf-8")
+        except OSError:
+            pass
+
+    def run_history(self, name: str) -> list[dict[str, Any]]:
+        tool = self.tools.get(name)
+        path = self._runs_path(tool) if tool else None
+        if path is None or not path.exists():
+            return []
+        try:
+            data = json.loads(path.read_text(encoding="utf-8"))
+            return data if isinstance(data, list) else []
+        except (ValueError, OSError):
+            return []
+
+    def files(self, name: str) -> list[dict[str, Any]]:
+        """The files that make up a tool, for its sub-surface."""
+        tool = self.tools.get(name)
+        if tool is None or tool.dir is None or not tool.dir.exists():
+            return []
+        out: list[dict[str, Any]] = []
+        for p in sorted(tool.dir.iterdir()):
+            if p.is_file():
+                try:
+                    size = p.stat().st_size
+                except OSError:
+                    size = 0
+                out.append({"name": p.name, "size": size, "entry": p.name == tool.entry})
+        return out
+
+    def manifest_text(self, name: str) -> str:
+        tool = self.tools.get(name)
+        if tool is None or tool.dir is None:
+            return ""
+        mf = tool.dir / "tool.json"
+        try:
+            return mf.read_text(encoding="utf-8") if mf.exists() else ""
+        except OSError:
+            return ""
 
     def _exec(self, cmd: list[str], stdin: str = "") -> ToolResult:
         self.workspace_dir.mkdir(parents=True, exist_ok=True)

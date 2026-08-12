@@ -146,3 +146,30 @@ def test_reset_can_mint_new_identity(tmp_path):
 def test_safe_name():
     assert safe_name("My Cool Tool!") == "my-cool-tool"
     assert safe_name("   ") == "tool"
+
+
+# -- per-tool sub-surface: run history, files, manifest --------------------
+
+def test_run_history_is_recorded_and_bounded(tmp_path):
+    reg = registry(tmp_path)
+    reg.write_tool("counter", "counts args", "bash", 'echo "$#"')
+    assert reg.run_history("counter") == []
+    reg.run_tool("counter", ["a", "b"], by="you")
+    reg.run_tool("counter", ["x"], by="agent")
+    hist = reg.run_history("counter")
+    assert len(hist) == 2
+    assert hist[0]["by"] == "agent" and hist[0]["args"] == "x"  # newest first
+    assert hist[1]["by"] == "you" and hist[1]["ok"] is True
+    # bounded to 25
+    for i in range(30):
+        reg.run_tool("counter", [str(i)])
+    assert len(reg.run_history("counter")) == 25
+
+
+def test_files_and_manifest_introspection(tmp_path):
+    reg = registry(tmp_path)
+    reg.write_tool("greet", "hi", "python", "print('hi')")
+    names = {f["name"] for f in reg.files("greet")}
+    assert {"run.py", "tool.json"} <= names
+    assert any(f["entry"] for f in reg.files("greet") if f["name"] == "run.py")
+    assert '"name": "greet"' in reg.manifest_text("greet")

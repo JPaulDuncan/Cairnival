@@ -107,6 +107,31 @@ def test_surface_page_runs_tool_with_inputs(tmp_path):
         assert client.get("/surface/secret").status_code == 404
 
 
+def test_tool_sub_surface_runs_inline_and_shows_history(tmp_path):
+    cfg = agent_cfg(tmp_path, "moth")
+    cfg.tool_sharing = "all"
+    app = create_app(cfg)
+    mem = Memory(cfg.home, "moth")
+    mem.ensure()
+    reg = ToolRegistry(mem.tools_dir, mem.workspace_dir, cfg)
+    reg.write_tool("greet", "greet by name", "bash", 'echo "hello, $1"')
+    with TestClient(app) as client:
+        page = client.get("/tools/greet")
+        assert page.status_code == 200
+        for section in ("Run", "Source", "Sharing", "Files"):
+            assert section in page.text
+        # a shared tool with MCP on shows its MCP call signature
+        assert "/mcp" in page.text and "tools/call" in page.text
+        # running inline shows the output on the same page and logs history
+        ran = client.post("/tools/greet/run", data={"args": "wren"})
+        assert ran.status_code == 200
+        assert "hello, wren" in ran.text
+        assert "Recent runs" in ran.text
+        # a missing tool 404s
+        assert client.get("/tools/nope").status_code == 404
+        assert client.post("/tools/nope/run", data={"args": ""}).status_code == 404
+
+
 def test_journal_page_shows_actions(tmp_path):
     cfg = agent_cfg(tmp_path, "moth")
     app = create_app(cfg)

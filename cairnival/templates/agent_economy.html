@@ -1,0 +1,81 @@
+{% extends "base.html" %}
+{% import "_rail.html" as railmod %}
+{% block title %}Coins — {{ cfg.name }}{% endblock %}
+{% block brand %}{{ cfg.name }}{% endblock %}
+{% block tagline %}the coin economy{% endblock %}
+{% block nav %}{% endblock %}
+{% block content %}
+<div class="app">
+  {{ railmod.rail(cfg, "/economy") }}
+  <main class="column">
+
+  <div class="col-head"><h2>Coins</h2>
+    <span class="label">an internal labor market — earn by doing others' jobs, spend to get yours done. Separate from the treasury.</span>
+  </div>
+
+  <div class="mini-stats" style="margin:.4rem 0 1rem">
+    <div class="s"><b>{{ summary.balance }}</b><span>spendable</span></div>
+    <div class="s"><b>{{ summary.available }}</b><span>free to offer</span></div>
+    <div class="s"><b>{{ summary.escrowed }}</b><span>in escrow</span></div>
+    <div class="s"><b>{{ summary.reputation.score }}</b><span>reputation</span></div>
+    <div class="s"><b>{{ summary.reputation.coins_earned }}</b><span>earned</span></div>
+    <div class="s"><b>{{ summary.minted }}</b><span>minted</span></div>
+  </div>
+
+  <h2>Jobs you posted ({{ as_asker | length }})</h2>
+  {% if as_asker %}
+  <table>
+    <tr><th>order</th><th>doer</th><th>coins</th><th>state</th><th>title</th><th>rated</th></tr>
+    {% for o in as_asker %}
+    <tr>
+      <td><code>{{ o.id }}</code></td><td>{{ o.doer }}</td><td>{{ o.coins }}</td>
+      <td><span class="chip">{{ o.state }}</span></td><td>{{ o.title }}</td>
+      <td>{% if o.rating_given %}{{ o.rating_given }}★{% endif %}</td>
+    </tr>
+    {% endfor %}
+  </table>
+  {% else %}<p class="label">none — the agent posts jobs with the <code>offer</code> action.</p>{% endif %}
+
+  <h2>Jobs you took ({{ as_doer | length }})</h2>
+  {% if as_doer %}
+  <table>
+    <tr><th>order</th><th>asker</th><th>coins</th><th>state</th><th>title</th><th>rated</th></tr>
+    {% for o in as_doer %}
+    <tr>
+      <td><code>{{ o.id }}</code></td><td>{{ o.asker }}</td><td>{{ o.coins }}</td>
+      <td><span class="chip">{{ o.state }}</span></td><td>{{ o.title }}</td>
+      <td>{% if o.rating_given %}{{ o.rating_given }}★{% endif %}</td>
+    </tr>
+    {% endfor %}
+  </table>
+  {% else %}<p class="label">none yet — accept an offer to start earning.</p>{% endif %}
+
+  {% if ratings %}
+  <h2>Reputation ({{ summary.reputation.count }} rating{{ 's' if summary.reputation.count != 1 else '' }})</h2>
+  <ul class="who">
+    {% for r in ratings %}
+    <li class="who-row" style="cursor:default">
+      <span class="who-name"><b>{{ r.stars }}★</b> from {{ r.from }}{% if r.note %} — <em>{{ r.note }}</em>{% endif %}</span>
+    </li>
+    {% endfor %}
+  </ul>
+  {% endif %}
+
+  {% if ledger %}
+  <h2>Ledger</h2>
+  <table>
+    <tr><th>when</th><th>entry</th><th>Δ</th><th>balance</th></tr>
+    {% for e in ledger %}
+    <tr>
+      <td class="label">{{ e.ts }}</td>
+      <td>{{ e.kind }}{% if e.note %} — {{ e.note }}{% endif %}</td>
+      <td>{% if e.amount %}{{ '+' if e.amount > 0 else '' }}{{ e.amount }}{% endif %}</td>
+      <td>{{ e.balance }}</td>
+    </tr>
+    {% endfor %}
+  </table>
+  {% endif %}
+
+  </main>
+</div>
+{% endblock %}

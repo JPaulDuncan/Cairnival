@@ -153,6 +153,21 @@ class Memory:
         return self.home / "outbox"
 
     @property
+    def sent_dir(self) -> Path:
+        """Outgoing messages the agent sent — the Sent folder."""
+        return self.home / "sent"
+
+    @property
+    def spam_dir(self) -> Path:
+        """Quarantined messages from senders the agent blocked."""
+        return self.home / "spam"
+
+    @property
+    def trash_dir(self) -> Path:
+        """Soft-deleted messages, restorable until emptied."""
+        return self.home / "trash"
+
+    @property
     def keys_dir(self) -> Path:
         return self.home / "keys"
 
@@ -195,6 +210,9 @@ class Memory:
             self.archive_dir,
             self.specimens_dir,
             self.outbox_dir,
+            self.sent_dir,
+            self.spam_dir,
+            self.trash_dir,
             self.keys_dir,
             self.treasury_dir,
             self.tools_dir,
@@ -250,6 +268,9 @@ class Memory:
             self.archive_dir,
             self.specimens_dir,
             self.outbox_dir,
+            self.sent_dir,
+            self.spam_dir,
+            self.trash_dir,
             self.tools_dir,
             self.workspace_dir,
             self.treasury_dir,

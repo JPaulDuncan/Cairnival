@@ -1,0 +1,20 @@
+{% macro tabs(active, counts) %}
+<div class="msg-tabs">
+  {% set folders = [
+    ('inbox', 'Inbox', '↓'),
+    ('sent', 'Sent', '↑'),
+    ('archive', 'Read', '✓'),
+    ('spam', 'Spam', '⚑'),
+    ('trash', 'Trash', '🗑'),
+  ] %}
+  {% for key, label, ic in folders %}
+  <a class="msg-tab {% if active == key %}on{% endif %}" href="/messages?folder={{ key }}">
+    <span class="ic">{{ ic }}</span> {{ label }}
+    {% if counts[key] %}<span class="msg-count">{{ counts[key] }}</span>{% endif %}
+  </a>
+  {% endfor %}
+  <a class="msg-tab {% if active == 'threads' %}on{% endif %}" href="/messages/threads">
+    <span class="ic">❝</span> Threads
+  </a>
+</div>
+{% endmacro %}

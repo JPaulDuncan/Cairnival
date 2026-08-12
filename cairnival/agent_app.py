@@ -24,7 +24,7 @@ from fastapi import FastAPI, Form, HTTPException, Request
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
 
-from . import messaging
+from . import messages, messaging
 from .avatar import avatar_svg
 from .config import AgentConfig
 from .federation import Envelope, Identity, verify
@@ -78,6 +78,8 @@ def create_app(cfg: AgentConfig | None = None) -> FastAPI:
         inbound_times[sender] = times
         if len(times) > c.abuse_threshold:
             memory.blacklist_add(sender, "auto: inbound message-rate abuse")
+            # sweep anything this flooder already dropped into the Spam folder
+            messages.sweep_sender_to_spam(memory, sender)
 
     wake_now = threading.Event()
     scheduler_state = {
@@ -319,29 +321,123 @@ def create_app(cfg: AgentConfig | None = None) -> FastAPI:
             {"cfg": c, "posts": _home_feed(memory), "peers": memory.load_peers()},
         )
 
-    # -- inbox / DMs -------------------------------------------------------
-    @app.get("/inbox", response_class=HTMLResponse)
-    def inbox_page(request: Request):
+    # -- messages (the mailbox) --------------------------------------------
+    @app.get("/inbox")
+    def inbox_redirect(request: Request):
+        return _redirect(request, "/messages")
+
+    @app.get("/messages", response_class=HTMLResponse)
+    def messages_page(request: Request):
         c = current()
         memory = open_memory(c)
-        dms = [i for i in pending(memory.inbox_dir) if i.source == "federation"]
-        others = [i for i in pending(memory.inbox_dir) if i.source != "federation"]
+        folder = request.query_params.get("folder", "inbox")
+        if folder not in messages.FOLDERS:
+            folder = "inbox"
         return templates.TemplateResponse(
             request,
-            "agent_inbox.html",
-            {"cfg": c, "dms": dms, "others": others, "blacklist": memory.load_blacklist()},
+            "agent_messages.html",
+            {
+                "cfg": c,
+                "folder": folder,
+                "counts": messages.counts(memory),
+                "items": messages.load(memory, folder),
+                "blacklist": memory.load_blacklist(),
+                "moved": request.query_params.get("moved", ""),
+            },
         )
 
-    @app.post("/inbox/ignore")
-    def inbox_ignore(request: Request, path: str = Form(...)):
-        """Discard a pending message unread — the agent's right to ignore."""
+    @app.get("/messages/threads", response_class=HTMLResponse)
+    def messages_threads(request: Request):
+        c = current()
+        memory = open_memory(c)
+        return templates.TemplateResponse(
+            request,
+            "agent_threads.html",
+            {"cfg": c, "counts": messages.counts(memory), "threads": messages.threads(memory)},
+        )
+
+    @app.get("/messages/thread/{handle}", response_class=HTMLResponse)
+    def messages_thread(request: Request, handle: str):
+        c = current()
+        memory = open_memory(c)
+        convo = next((t for t in messages.threads(memory) if t["peer"] == handle), None)
+        return templates.TemplateResponse(
+            request,
+            "agent_thread.html",
+            {
+                "cfg": c,
+                "handle": handle,
+                "messages": convo["messages"] if convo else [],
+                "blocked": memory.is_blacklisted(handle),
+                "sent": request.query_params.get("sent", ""),
+            },
+        )
+
+    def _move_msg(request: Request, folder: str, name: str, dest_dir, back: str):
+        check_token(request)
+        memory = open_memory(current())
+        msg = messages.find(memory, folder, name)
+        if msg is not None:
+            messages.move(msg.path, dest_dir)
+        return _redirect(request, back)
+
+    @app.post("/messages/{folder}/trash")
+    def message_trash(request: Request, folder: str, name: str = Form(...)):
+        memory = open_memory(current())
+        return _move_msg(request, folder, name, memory.trash_dir, f"/messages?folder={folder}&moved=trash")
+
+    @app.post("/messages/{folder}/restore")
+    def message_restore(request: Request, folder: str, name: str = Form(...)):
+        memory = open_memory(current())
+        return _move_msg(request, folder, name, memory.inbox_dir, f"/messages?folder={folder}&moved=restored")
+
+    @app.post("/messages/{folder}/delete")
+    def message_delete(request: Request, folder: str, name: str = Form(...)):
+        """Delete a message forever (only from spam or trash)."""
+        check_token(request)
+        memory = open_memory(current())
+        if folder in ("spam", "trash"):
+            msg = messages.find(memory, folder, name)
+            if msg is not None and msg.path is not None:
+                msg.path.unlink()
+        return _redirect(request, f"/messages?folder={folder}&moved=deleted")
+
+    @app.post("/messages/{folder}/spam")
+    def message_spam(request: Request, folder: str, name: str = Form(...)):
+        """Mark as spam: block the sender and move their messages to Spam."""
+        check_token(request)
+        memory = open_memory(current())
+        msg = messages.find(memory, folder, name)
+        if msg is not None:
+            if msg.sender:
+                memory.blacklist_add(msg.sender, "marked as spam")
+                messages.sweep_sender_to_spam(memory, msg.sender)
+            if msg.path is not None and msg.path.exists():
+                messages.move(msg.path, memory.spam_dir)
+        return _redirect(request, f"/messages?folder={folder}&moved=spam")
+
+    @app.post("/messages/{folder}/notspam")
+    def message_notspam(request: Request, folder: str, name: str = Form(...)):
+        """Not spam: unblock the sender and move the message back to the inbox."""
+        check_token(request)
+        memory = open_memory(current())
+        msg = messages.find(memory, folder, name)
+        if msg is not None:
+            if msg.sender:
+                memory.blacklist_remove(msg.sender)
+            messages.move(msg.path, memory.inbox_dir)
+        return _redirect(request, f"/messages?folder={folder}&moved=notspam")
+
+    @app.post("/messages/reply")
+    def messages_reply(request: Request, handle: str = Form(...), text: str = Form(...)):
+        """Send a message to an agent (from a thread) — delivered and filed
+        in Sent."""
         check_token(request)
         c = current()
         memory = open_memory(c)
-        target = memory.inbox_dir / Path(path).name  # basename only, no traversal
-        if target.exists() and target.parent == memory.inbox_dir:
-            target.unlink()
-        return _redirect(request, "/inbox")
+        identity = Identity.load_or_create(memory.keys_dir, c.name)
+        ok, how = messaging.deliver_note(c, identity, memory, handle.strip(), text.strip())
+        return _redirect(request, f"/messages/thread/{handle}?sent={how if ok else 'undeliverable'}")
 
     # -- federation --------------------------------------------------------
     @app.get("/federation", response_class=HTMLResponse)

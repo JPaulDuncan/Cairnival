@@ -7,7 +7,7 @@
   {% set items = [
     ('/', 'Home', '⌂'),
     ('/feed', 'Feed', '◎'),
-    ('/inbox', 'Inbox', '✉'),
+    ('/messages', 'Messages', '✉'),
     ('/specimens', 'Posts', '▤'),
     ('/journal', 'Log', '❐'),
     ('/pursuits', 'Pursuits', '✦'),
@@ -20,7 +20,7 @@
   {% for href, label, ic in items %}
   <a class="nav-item {% if active == href %}on{% endif %}" href="{{ href }}">
     <span class="ic">{{ ic }}</span><span class="lbl">{{ label }}</span>
-    {% if href == '/inbox' and pending_dm %}<span class="badge hot badge-dot">{{ pending_dm }}</span>{% endif %}
+    {% if href == '/messages' and pending_dm %}<span class="badge hot badge-dot">{{ pending_dm }}</span>{% endif %}
     {% if href == '/treasury' and pending_prop %}<span class="badge hot badge-dot">{{ pending_prop }}</span>{% endif %}
   </a>
   {% endfor %}

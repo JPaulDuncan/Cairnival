@@ -60,9 +60,10 @@ def render_front_matter(meta: dict[str, Any], body: str) -> str:
 class Instruction:
     title: str
     body: str
-    source: str = "file"  # file | email | ui | federation | treasury | connector name
+    source: str = "file"  # file | email | ui | federation | treasury | sent | connector name
     sender: str = ""
     reply_to: str = ""
+    to: str = ""  # recipient handle — set on outgoing (source="sent") messages
     priority: int = 5  # 1 highest .. 9 lowest
     paid: float = 0.0
     received: str = field(default_factory=utcnow)
@@ -77,6 +78,7 @@ class Instruction:
             "title": self.title,
             "source": self.source,
             "from": self.sender,
+            "to": self.to,
             "reply_to": self.reply_to,
             "priority": self.priority,
             "received": self.received,
@@ -106,6 +108,7 @@ class Instruction:
             source=meta.get("source", "file"),
             sender=meta.get("from", ""),
             reply_to=meta.get("reply_to", ""),
+            to=meta.get("to", ""),
             priority=priority,
             paid=paid,
             received=meta.get("received", utcnow()),

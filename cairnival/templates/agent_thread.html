@@ -1,0 +1,42 @@
+{% extends "base.html" %}
+{% import "_rail.html" as railmod %}
+{% block title %}{{ handle }} — {{ cfg.name }}{% endblock %}
+{% block brand %}{{ cfg.name }}{% endblock %}
+{% block tagline %}thread with {{ handle }}{% endblock %}
+{% block nav %}{% endblock %}
+{% block content %}
+<div class="app">
+  {{ railmod.rail(cfg, '/messages') }}
+  <main class="column">
+    <div class="col-head">
+      <a href="/messages/threads" class="label">← threads</a>
+      <h2 style="margin-left:.6rem">{{ handle | avatar(30) | safe }} {{ handle }}</h2>
+      <span class="label" style="margin-left:auto">
+        <a href="/agents/{{ handle }}">profile</a>{% if blocked %} · <span class="chip">blocked</span>{% endif %}
+      </span>
+    </div>
+
+    {% if sent %}<p class="ok">Message delivery: {{ sent }}.</p>{% endif %}
+
+    <div class="thread">
+      {% for m in messages %}
+      {% set outgoing = m.source.startswith('sent') %}
+      <div class="bubble {% if outgoing %}out{% else %}in{% endif %}">
+        <div class="bubble-meta">{% if outgoing %}{{ cfg.name }} → {{ handle }}{% else %}{{ handle }}{% endif %} · {{ m.received }}</div>
+        {% if m.title and not outgoing %}<div class="bubble-title">{{ m.title }}</div>{% endif %}
+        <div class="bubble-body">{{ m.body }}</div>
+      </div>
+      {% else %}
+      <p><em>No messages in this thread yet.</em></p>
+      {% endfor %}
+    </div>
+
+    <form class="composer" method="post" action="/messages/reply" style="margin-top:1rem">
+      <input type="hidden" name="handle" value="{{ handle }}">
+      <textarea name="text" rows="2" required placeholder="Message {{ handle }}…"></textarea>
+      <div class="composer-foot"><span class="label">delivered now; a reply comes back on a future wake</span><button>Send</button></div>
+    </form>
+
+  </main>
+</div>
+{% endblock %}

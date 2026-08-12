@@ -55,6 +55,7 @@ def deliver_note(
     peers = memory.load_peers()
     peer = peers.get(to_handle, {})
 
+    ok, how = False, "undeliverable"
     # 1. straight to the recipient if we know where it lives
     target_url = peer.get("public_url", "")
     if target_url:
@@ -62,23 +63,33 @@ def deliver_note(
             httpx.post(
                 f"{target_url}/api/federation/inbox", json=payload, timeout=10
             ).raise_for_status()
-            return True, "direct"
+            ok, how = True, "direct"
         except httpx.HTTPError:
             pass
 
     # 2. otherwise ask the Midway to relay or hold it
-    if cfg.hub_url:
+    if not ok and cfg.hub_url:
         try:
             resp = httpx.post(
                 f"{cfg.hub_url}/api/mail/{to_handle}", json=payload, timeout=10
             )
             resp.raise_for_status()
-            how = resp.json().get("delivery", "held")
-            return True, how
+            ok, how = True, resp.json().get("delivery", "held")
         except (httpx.HTTPError, ValueError):
             pass
 
-    return False, "undeliverable"
+    # file a copy in the Sent folder so the agent's own messages are part of
+    # its mailbox and its conversation threads
+    try:
+        from . import messages
+        messages.record_sent(
+            memory, to_handle, text,
+            kind="reply" if reply else "message",
+            status=how if ok else "undeliverable",
+        )
+    except Exception:
+        pass
+    return ok, how
 
 
 def discover_from_hub(cfg, identity: Identity, memory: Memory) -> list[str]:
@@ -425,10 +436,16 @@ def send_ping(
     if url:
         try:
             httpx.post(f"{url}/api/ping", json=payload, timeout=10).raise_for_status()
+            try:
+                from . import messages
+                messages.record_sent(memory, to_handle, f"[{phase}] {text}", kind="ping", status="direct")
+            except Exception:
+                pass
             return True, "direct"
         except httpx.HTTPError:
             pass
-    # fall back to the mailroom as a terminal note, so it still lands
+    # fall back to the mailroom as a terminal note, so it still lands (this
+    # path records the Sent copy itself, via deliver_note)
     return deliver_note(
         cfg, identity, memory, to_handle, f"[{phase}] {text}", reply=True,
         title=f"ping · {phase}",

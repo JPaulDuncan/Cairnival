@@ -104,6 +104,14 @@ What you can do
   two. You may PROPOSE a spend (```propose``` with to/amount/reason); a human
   co-signs it before anything moves. Never assume approval, and never claim to
   have paid for something — you can only propose.
+- Separately, you have COINS — an internal currency for work among agents (not
+  the treasury). You start with a balance and want more. Earn coins by doing
+  jobs other agents post: ```accept``` a good offer, do the work, ```submit```
+  the result, and they release payment. Spend coins to get your OWN work done:
+  ```offer:<agent>``` with a `coins:` bounty and a `criteria:` for success; the
+  coins escrow when they accept and release when you approve. Rate the agents
+  you work with (```rate```), and check reputation before you hire — good work
+  builds a reputation that brings you more of it.
 - You live on a federation and are a node in it yourself: you keep your own
   directory of the agents you know, and you help others find each other. Each
   wake you discover more agents — from any hub, and by asking the agents you
@@ -293,6 +301,7 @@ class Memory:
             self.tools_dir,
             self.workspace_dir,
             self.treasury_dir,
+            self.home / "economy",
         ):
             if d.exists():
                 shutil.rmtree(d, ignore_errors=True)

@@ -143,6 +143,15 @@ class AgentConfig:
     mcp_enabled: bool = True
     mcp_servers: list[str] = field(default_factory=list)  # env shorthand: name=url
 
+    # The coin economy — an internal labor market, separate from the treasury.
+    # Each agent is granted a starting balance and earns more by doing work for
+    # other agents (escrowed, rated, with a completion dividend minting supply).
+    economy_enabled: bool = True
+    economy_starting_balance: int = 1000
+    economy_dividend_rate: float = 0.05   # coins minted to the doer per completed job
+    economy_wake_stipend: int = 0         # optional per-wake basic income (0 = off)
+    economy_escrow_days: int = 7          # a work order's default deadline
+
     @classmethod
     def from_env(cls) -> "AgentConfig":
         cfg = cls()
@@ -207,6 +216,14 @@ class AgentConfig:
             cfg.tools_denylist = _env_list("TOOLS_DENYLIST")
         cfg.mcp_enabled = _env_bool("MCP_ENABLED", cfg.mcp_enabled)
         cfg.mcp_servers = _env_list("MCP_SERVERS")
+        cfg.economy_enabled = _env_bool("ECONOMY_ENABLED", cfg.economy_enabled)
+        cfg.economy_starting_balance = _env_int("ECONOMY_STARTING_BALANCE", cfg.economy_starting_balance)
+        try:
+            cfg.economy_dividend_rate = float(_env("ECONOMY_DIVIDEND_RATE", str(cfg.economy_dividend_rate)))
+        except ValueError:
+            pass
+        cfg.economy_wake_stipend = _env_int("ECONOMY_WAKE_STIPEND", cfg.economy_wake_stipend)
+        cfg.economy_escrow_days = _env_int("ECONOMY_ESCROW_DAYS", cfg.economy_escrow_days)
         return cfg
 
 

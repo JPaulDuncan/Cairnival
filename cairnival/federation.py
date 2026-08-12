@@ -29,6 +29,9 @@ from .memory import utcnow
 ENVELOPE_KINDS = (
     "hello", "instruct", "specimen", "note", "locate",
     "help", "react", "comment", "ping",
+    # the coin economy — a signed work-order market with 2-of-2 escrow
+    "work_offer", "work_accept", "work_decline", "work_submit",
+    "work_release", "work_rate",
 )
 
 

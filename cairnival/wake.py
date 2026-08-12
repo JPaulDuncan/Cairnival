@@ -111,6 +111,24 @@ def _form_personality(ctx: WakeContext) -> None:
         pass
 
 
+def _economy_upkeep(ctx: WakeContext) -> None:
+    """Grant the starting coins on the first wake, pay any stipend, and refund
+    escrow on work orders whose deadline has passed."""
+    if not getattr(ctx.cfg, "economy_enabled", False):
+        return
+    from .economy import EconomyBook
+
+    book = EconomyBook(ctx.memory.home, ctx.cfg.name, ctx.cfg)
+    if book.ensure_grant():
+        ctx.note(f"granted {book.balance()} starting coins")
+    minted = book.stipend()
+    if minted:
+        ctx.note(f"minted {minted} coins (wake stipend)")
+    expired = book.expire_overdue()
+    for oid in expired:
+        ctx.note(f"work order {oid} expired — escrow refunded")
+
+
 def _self_directed_instruction(ctx: WakeContext) -> Instruction:
     """A prompt the agent gives *itself* when it has spare attention: advance a
     goal of its own, or dream one up. Not from anyone's inbox — this is where
@@ -506,6 +524,9 @@ def run_wake(cfg: AgentConfig) -> WakeReport:
 
     # 1a. if this is a new agent, let it form its own voice
     _stage("forming personality", lambda: _form_personality(ctx))
+
+    # 1a′. coin economy upkeep: grant on first wake, stipend, expire escrows
+    _stage("economy upkeep", lambda: _economy_upkeep(ctx))
 
     # 1b. discover the tools we have, fresh — including any we wrote before
     discovered = registry.discover()

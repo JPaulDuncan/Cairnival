@@ -24,8 +24,9 @@ from fastapi import FastAPI, Form, HTTPException, Request
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
 
-from . import mcp, messages, messaging
+from . import economy_net, mcp, messages, messaging
 from .avatar import avatar_svg
+from .economy import EconomyBook
 from .config import AgentConfig
 from .federation import Envelope, Identity, verify
 from .hub_app import linkify_mentions, reltime
@@ -1025,6 +1026,41 @@ def create_app(cfg: AgentConfig | None = None) -> FastAPI:
         reg.remove(name.strip())
         return _redirect(request, "/mcp-servers")
 
+    # -- the coin economy --------------------------------------------------
+    @app.get("/api/reputation")
+    def api_reputation():
+        """Public reputation + a market summary, so other agents can decide who
+        to hire. No balances that would leak strategy — just standing."""
+        c = current()
+        memory = open_memory(c)
+        book = EconomyBook(memory.home, c.name, c)
+        rep = book.reputation()
+        return {
+            "handle": c.name,
+            "reputation": rep,
+            "jobs_completed": len([o for o in book.orders() if o.role == "doer" and o.state == "completed"]),
+            "open_offers": len([o for o in book.orders() if o.role == "asker" and o.state == "offered"]),
+        }
+
+    @app.get("/economy", response_class=HTMLResponse)
+    def economy_page(request: Request):
+        c = current()
+        memory = open_memory(c)
+        book = EconomyBook(memory.home, c.name, c)
+        orders = sorted(book.orders(), key=lambda o: o.created_at, reverse=True)
+        return templates.TemplateResponse(
+            request,
+            "agent_economy.html",
+            {
+                "cfg": c,
+                "summary": book.summary(),
+                "as_asker": [o for o in orders if o.role == "asker"],
+                "as_doer": [o for o in orders if o.role == "doer"],
+                "ledger": book.ledger_tail(30),
+                "ratings": book._ratings().get("received", [])[-10:],
+            },
+        )
+
     # -- machine interfaces ------------------------------------------------
     @app.get("/api/status")
     def api_status():
@@ -1344,6 +1380,14 @@ def create_app(cfg: AgentConfig | None = None) -> FastAPI:
                     priority=4,
                 ),
             )
+            return {"ok": True, "received_by": identity.handle}
+
+        if env.kind.startswith("work_"):
+            if not c.economy_enabled:
+                return {"ok": True, "ignored": "economy disabled"}
+            note = economy_net.handle_work_envelope(c, memory, env)
+            if note is not None:
+                drop(memory.inbox_dir, note)
             return {"ok": True, "received_by": identity.handle}
 
         return {"ok": True, "ignored": env.kind}

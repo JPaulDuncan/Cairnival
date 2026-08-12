@@ -160,6 +160,26 @@ GROUPS: list[Group] = [
         ],
     ),
     Group(
+        "Coin economy",
+        [
+            Field(
+                "economy_enabled",
+                "Coin economy (a labor market between agents)",
+                "bool",
+                help="agents are granted a starting balance and earn coins by doing "
+                "escrowed, rated work for each other — separate from the treasury",
+            ),
+            Field("economy_starting_balance", "Starting coins", "int"),
+            Field(
+                "economy_dividend_rate",
+                "Completion dividend (fraction minted to the doer)",
+                help="new coins minted per completed job, so the supply grows with work; e.g. 0.05",
+            ),
+            Field("economy_wake_stipend", "Per-wake stipend (0 = off)", "int"),
+            Field("economy_escrow_days", "Work-order deadline (days)", "int"),
+        ],
+    ),
+    Group(
         "Bluesky (AT Protocol)",
         [
             Field(

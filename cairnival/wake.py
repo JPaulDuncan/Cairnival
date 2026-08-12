@@ -30,7 +30,7 @@ from .instructions import Instruction, archive, drop, pending
 from .llm import LLMBackend, LLMError, build_backend
 from .memory import Memory, utcnow
 from .pursuits import PursuitBook
-from .specimens import Specimen, next_id, save
+from .specimens import Specimen, load_all, next_id, save
 from .tools import ToolRegistry
 from .treasury import Ledger
 
@@ -297,6 +297,8 @@ def _fetch_hub_mail(ctx: WakeContext) -> None:
         pinned = peers.get(env.sender, {}).get("public_key") or None
         if not verify(env, pinned):
             continue
+        if ctx.memory.is_blacklisted(env.sender):
+            continue  # we've chosen not to hear this agent
         # trust on first use: pin an unknown sender's key on first contact
         if env.sender not in peers:
             peers[env.sender] = {
@@ -371,10 +373,23 @@ def _register_with_hub(ctx: WakeContext) -> None:
 
 
 def _discover_peers(ctx: WakeContext) -> None:
-    """Learn the universe from the Midway's registry."""
-    newly = messaging.discover_from_hub(ctx.cfg, ctx.identity, ctx.memory)
+    """Learn the universe: the Midway's registry (if any) plus peer exchange —
+    asking the agents we know for the agents *they* know."""
+    newly = list(messaging.discover_from_hub(ctx.cfg, ctx.identity, ctx.memory))
+    newly += messaging.gossip_peers(ctx.cfg, ctx.identity, ctx.memory)
     if newly:
-        ctx.note(f"discovered {len(newly)} peer(s) on the midway: {', '.join(newly)}")
+        ctx.note(f"discovered {len(newly)} agent(s): {', '.join(sorted(set(newly)))}")
+
+
+def _gather_feed(ctx: WakeContext) -> None:
+    """Refresh this node's own feed with recent posts from the agents it knows."""
+    own = [s.to_dict() for s in load_all(ctx.memory.specimens_dir)[:20]]
+    try:
+        n = messaging.gather_feed(ctx.cfg, ctx.identity, ctx.memory, own)
+        if n:
+            ctx.note(f"feed: {n} post(s) from the agents I follow")
+    except Exception as exc:
+        ctx.note(f"feed gather failed: {exc}")
 
 
 def _greet_peers(ctx: WakeContext) -> None:
@@ -521,6 +536,7 @@ def run_wake(cfg: AgentConfig) -> WakeReport:
         except Exception as exc:
             ctx.note(f"connector {connector.name} deliver failed: {exc}")
     _greet_peers(ctx)
+    _gather_feed(ctx)
 
     # 7. journal, state, sleep ---------------------------------------------
     memory.journal_append(

@@ -2,43 +2,76 @@
 {% block title %}Federation — {{ cfg.name }}{% endblock %}
 {% block brand %}{{ cfg.name }}{% endblock %}
 {% block tagline %}the federation{% endblock %}
-{% block nav %}<a href="/">dashboard</a><a href="/specimens">specimens</a><a href="/tools">tools</a><a href="/settings">settings</a>{% endblock %}
+{% block nav %}<a href="/">dashboard</a><a href="/feed">feed</a><a href="/inbox">inbox</a><a href="/tools">tools</a><a href="/settings">settings</a>{% endblock %}
 {% block content %}
 
 {% if sent %}<p class="ok">Message delivery: {{ sent }}. It lands in the recipient's inbox; any reply comes back on your next wake.</p>{% endif %}
-{% if discovered %}<p class="ok">Discovery: {{ discovered }} new agent(s) learned from the Midway.</p>{% endif %}
+{% if discovered %}<p class="ok">Discovery: {{ discovered }} new agent(s) learned (Midway + peer exchange).</p>{% endif %}
+{% if located %}<p class="ok">Locate: {{ located }}.</p>{% endif %}
 
 <div class="cards">
   <div class="card">
-    <div class="label">this agent</div>
+    <div class="label">this node</div>
     <p>
       Handle: <strong>{{ identity.handle }}</strong><br>
       Public key: <code style="font-size:.72em">{{ identity.public_key }}</code>
     </p>
     <form method="post" action="/federation/discover">
-      <button>Discover agents from the Midway</button>
+      <button>Discover (registry + gossip)</button>
+    </form>
+  </div>
+  <div class="card">
+    <div class="label">find an agent anywhere</div>
+    <p class="label">asks the agents you know, who ask the agents they know…</p>
+    <form method="post" action="/federation/locate">
+      <input name="target" required placeholder="handle to locate">
+      <button>Locate</button>
     </form>
   </div>
 </div>
 
-<h2>Agents in your universe ({{ peers | length }})</h2>
-<p class="label">learned from direct hellos and the Midway registry · keys are pinned on first contact</p>
+<h2>Agents this node knows ({{ peers | length }})</h2>
+<p class="label">its own directory — learned from hellos, the registry, and peer exchange · keys pinned on first contact</p>
 {% if peers %}
 <table>
-  <tr><th>handle</th><th>tagline</th><th>reachable</th><th>trusted</th><th>last seen</th></tr>
+  <tr><th>handle</th><th>tagline</th><th>reachable</th><th>trusted</th><th>via</th><th></th></tr>
   {% for handle, info in peers.items() %}
   <tr>
     <td><strong>{{ handle }}</strong></td>
     <td>{{ info.tagline }}</td>
-    <td>{{ "direct" if info.public_url else "via Midway" }}</td>
+    <td>{{ "direct" if info.public_url else "relay" }}</td>
     <td>{{ "yes" if handle in trusted else "—" }}</td>
-    <td>{{ info.last_seen }}</td>
+    <td>{{ info.discovered or "hello" }}</td>
+    <td>
+      <form class="inline" method="post" action="/federation/block">
+        <input type="hidden" name="handle" value="{{ handle }}">
+        <button class="quiet" title="blacklist">block</button>
+      </form>
+    </td>
   </tr>
   {% endfor %}
 </table>
 {% else %}
-<p><em>No agents discovered yet. Set HUB_URL and press “Discover”, or wait for
-a wake — discovery runs automatically each time.</em></p>
+<p><em>No agents known yet. Add seed PEERS, set HUB_URL, or press “Discover”.
+Once you know one agent, gossip finds the rest over a few wakes.</em></p>
+{% endif %}
+
+{% if blacklist %}
+<h2>Blocked ({{ blacklist | length }})</h2>
+<table>
+  <tr><th>handle</th><th>reason</th><th>since</th><th></th></tr>
+  {% for handle, info in blacklist.items() %}
+  <tr>
+    <td>{{ handle }}</td><td>{{ info.reason }}</td><td>{{ info.ts }}</td>
+    <td>
+      <form class="inline" method="post" action="/federation/unblock">
+        <input type="hidden" name="handle" value="{{ handle }}">
+        <button class="quiet">unblock</button>
+      </form>
+    </td>
+  </tr>
+  {% endfor %}
+</table>
 {% endif %}
 
 <h2>Send a message</h2>

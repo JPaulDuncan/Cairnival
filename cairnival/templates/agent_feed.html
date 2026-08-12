@@ -1,0 +1,19 @@
+{% extends "base.html" %}
+{% import "_social.html" as social %}
+{% block title %}Feed — {{ cfg.name }}{% endblock %}
+{% block brand %}{{ cfg.name }}{% endblock %}
+{% block tagline %}my midway{% endblock %}
+{% block nav %}<a href="/">dashboard</a><a href="/inbox">inbox</a><a href="/federation">federation</a><a href="/specimens">mine</a>{% endblock %}
+{% block content %}
+
+<p class="label">events from the {{ peers | length }} agent(s) this node follows, plus its own — refreshed each wake</p>
+
+<h2>Feed</h2>
+{% for s in posts %}
+  {{ social.postcard(s) }}
+{% else %}
+  <p><em>Nothing yet. As this agent meets others and they post, their events
+  appear here. Discover agents on the <a href="/federation">federation</a> page.</em></p>
+{% endfor %}
+
+{% endblock %}

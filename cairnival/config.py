@@ -46,13 +46,16 @@ class AgentConfig:
     wake_jitter_minutes: int = 20
     max_instructions_per_wake: int = 5
 
-    # LLM backend: ollama | llamacpp | llamacpp-cli | echo
+    # LLM backend: ollama | llamacpp | llamacpp-cli | claude-cli | codex-cli | echo
     llm_backend: str = "echo"
     ollama_url: str = "http://localhost:11434"
     ollama_model: str = "llama3.2"
     llamacpp_url: str = "http://localhost:8080"
     llamacpp_bin: str = "llama-cli"
     llamacpp_model_path: str = ""
+    claude_bin: str = "claude"  # the Claude Code CLI
+    codex_bin: str = "codex"  # the Codex CLI
+    cli_extra_args: str = ""  # extra args appended to the CLI backend
     llm_timeout_seconds: int = 300
     llm_max_tokens: int = 4096
     # Let reasoning models (Qwen3, DeepSeek-R1, …) actually reason. ON by
@@ -88,9 +91,14 @@ class AgentConfig:
     chain: str = "dryrun"  # dryrun | solana (adapter stub)
     ask_price: float = 0.02  # minimum paid-memo deposit that becomes an instruction
 
-    # Federation
-    peers: list[str] = field(default_factory=list)  # peer base URLs
+    # Federation — every agent is also a node/midway of its own
+    peers: list[str] = field(default_factory=list)  # seed peer base URLs
     trusted_handles: list[str] = field(default_factory=list)  # peers allowed to instruct
+    gossip_enabled: bool = True  # learn peers-of-peers each wake (peer exchange)
+    locate_ttl: int = 4  # how many hops a "who knows X?" query may travel
+    locate_fanout: int = 3  # how many peers to ask per hop
+    feed_peer_limit: int = 20  # posts to pull from each known peer for the feed
+    abuse_threshold: int = 40  # inbound messages/wake from one peer before auto-flag
 
     # Connectors, comma list: rss, webhook, or dotted module paths
     connectors: list[str] = field(default_factory=list)
@@ -146,6 +154,9 @@ class AgentConfig:
         cfg.llamacpp_url = _env("LLAMACPP_URL", cfg.llamacpp_url)
         cfg.llamacpp_bin = _env("LLAMACPP_BIN", cfg.llamacpp_bin)
         cfg.llamacpp_model_path = _env("LLAMACPP_MODEL_PATH", cfg.llamacpp_model_path)
+        cfg.claude_bin = _env("CLAUDE_BIN", cfg.claude_bin)
+        cfg.codex_bin = _env("CODEX_BIN", cfg.codex_bin)
+        cfg.cli_extra_args = _env("CLI_EXTRA_ARGS", cfg.cli_extra_args)
         cfg.llm_timeout_seconds = _env_int("LLM_TIMEOUT_SECONDS", cfg.llm_timeout_seconds)
         cfg.llm_max_tokens = _env_int("LLM_MAX_TOKENS", cfg.llm_max_tokens)
         cfg.llm_think = _env_bool("LLM_THINK", cfg.llm_think)
@@ -172,6 +183,11 @@ class AgentConfig:
             pass
         cfg.peers = [p.rstrip("/") for p in _env_list("PEERS")]
         cfg.trusted_handles = _env_list("TRUSTED_HANDLES")
+        cfg.gossip_enabled = _env_bool("GOSSIP", cfg.gossip_enabled)
+        cfg.locate_ttl = _env_int("LOCATE_TTL", cfg.locate_ttl)
+        cfg.locate_fanout = _env_int("LOCATE_FANOUT", cfg.locate_fanout)
+        cfg.feed_peer_limit = _env_int("FEED_PEER_LIMIT", cfg.feed_peer_limit)
+        cfg.abuse_threshold = _env_int("ABUSE_THRESHOLD", cfg.abuse_threshold)
         cfg.connectors = _env_list("CONNECTORS")
         cfg.rss_feeds = _env_list("RSS_FEEDS")
         cfg.webhook_token = _env("WEBHOOK_TOKEN", cfg.webhook_token)

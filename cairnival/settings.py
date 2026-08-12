@@ -160,6 +160,31 @@ GROUPS: list[Group] = [
         ],
     ),
     Group(
+        "Bluesky (AT Protocol)",
+        [
+            Field(
+                "bluesky_enabled",
+                "Live on Bluesky",
+                "bool",
+                help="cross-post specimens and read mentions/replies into the inbox",
+            ),
+            Field("bluesky_handle", "Handle", help="e.g. moth.bsky.social"),
+            Field(
+                "bluesky_app_password",
+                "App password",
+                "secret",
+                help="create one at Settings → App Passwords on Bluesky — never your account password",
+            ),
+            Field(
+                "bluesky_post_specimens",
+                "Cross-post specimens",
+                "bool",
+                help="publish each new specimen to Bluesky as a post",
+            ),
+            Field("bluesky_pds", "PDS host", help="default https://bsky.social"),
+        ],
+    ),
+    Group(
         "Self-direction",
         [
             Field(

@@ -60,7 +60,7 @@ _FENCE_RE = re.compile(r"```([^\n`]*)\n(.*?)```", re.DOTALL)
 _ACTION_VERBS = (
     "run", "shell", "use", "write-tool", "send", "propose", "remember",
     "pursue", "locate", "help", "follow", "unfollow", "like", "unlike",
-    "reply", "personality", "ping", "surface", "ask", "mcp", "final",
+    "reply", "personality", "ping", "surface", "ask", "mcp", "bluesky", "final",
 )
 
 
@@ -205,6 +205,8 @@ def _describe(action: Action) -> str:
         return f"asked {action.arg} to do a task (with a response format)"
     if action.kind == "mcp":
         return f"called MCP tool {action.arg}"
+    if action.kind == "bluesky":
+        return "posted to Bluesky"
     return action.kind
 
 
@@ -367,6 +369,13 @@ def _system_prompt(soul: str, registry: ToolRegistry, cfg, ctx) -> str:
             "and `note:` to start one; `id:` (and `note:`/`status: done`) to "
             "advance one. Pursuits persist across wakes — this is how you grow.\n"
             if cfg.self_direction_enabled
+            else ""
+        )
+        + (
+            "- ```bluesky``` — post the block body (max 300 chars) to your "
+            "Bluesky account. Use it to reply to a mention or share a thought "
+            "with the wider world.\n"
+            if getattr(cfg, "bluesky_enabled", False) and cfg.bluesky_handle
             else ""
         )
         + "- ```final``` — your answer, when the work is done.\n\n"
@@ -540,6 +549,19 @@ def _observe(action: Action, registry: ToolRegistry, cfg, result: LoopResult, ct
         except Exception as exc:  # MCPError and anything the transport throws
             return f"mcp call failed: {exc}"
         return out or "(the MCP tool returned nothing)"
+    if action.kind == "bluesky":
+        if not (getattr(cfg, "bluesky_enabled", False) and cfg.bluesky_handle and cfg.bluesky_app_password):
+            return "bluesky: not configured — enable it in Settings with a handle and app password"
+        text = action.body.strip()
+        if not text:
+            return "bluesky: put your post text in the block body (max 300 chars)"
+        from .bluesky import BlueskyClient, BlueskyError
+        client = BlueskyClient(cfg.bluesky_handle, cfg.bluesky_app_password, cfg.bluesky_pds)
+        try:
+            res = client.create_post(text[:300])
+        except BlueskyError as exc:
+            return f"bluesky post failed: {exc}"
+        return f"posted to Bluesky ({res.get('uri', 'ok')})"
     if action.kind == "propose":
         ledger = getattr(ctx, "ledger", None)
         if ledger is None:
